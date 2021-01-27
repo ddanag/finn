@@ -91,11 +91,13 @@ class AnnotateResources(Transformation):
             layer_res_dict = self.res_dict[lname]
             for r_type in layer_res_dict.keys():
                 r_amount = layer_res_dict[r_type]
-                r_amount = float(r_amount)
-                if r_type in total_dict.keys():
-                    total_dict[r_type] += r_amount
-                else:
-                    total_dict[r_type] = r_amount
+                try:
+                    r_amount = float(r_amount)
+                    if r_type in total_dict.keys():
+                        total_dict[r_type] += r_amount
+                    else:
+                        total_dict[r_type] = r_amount
+                except: pass
         for k in total_dict.keys():
             if "efficiency" in k:
                 total_dict[k] = total_dict[k] / len(graph.node)

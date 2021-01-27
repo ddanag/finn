@@ -28,6 +28,7 @@
 import warnings
 import os
 import xml.etree.ElementTree as ET
+import pandas as pd
 
 import finn.custom_op.registry as registry
 from finn.util.fpgadataflow import is_fpgadataflow_node
@@ -51,6 +52,8 @@ def hls_synth_res_estimation(model):
             res_dict[node.name]["LUT"] = 0
             res_dict[node.name]["DSP48E"] = 0
             res_dict[node.name]["URAM"] = 0
+            res_dict[node.name]["LUTRAMs"] = 0
+            
             inst = registry.getCustomOp(node)
             code_gen_dir = inst.get_nodeattr("code_gen_dir_ipgen")
             if code_gen_dir == "":
@@ -63,6 +66,9 @@ def hls_synth_res_estimation(model):
                 xmlfile = "{}/project_{}/sol1/syn/report/{}_csynth.xml".format(
                     code_gen_dir, node.name, node.name
                 )
+                rptfile = "{}/project_{}/sol1/syn/report/{}_csynth.rpt".format(
+                    code_gen_dir, node.name, node.name
+                )
 
                 if os.path.isfile(xmlfile):
                     tree = ET.parse(xmlfile)
@@ -70,6 +76,42 @@ def hls_synth_res_estimation(model):
                     for item in root.findall("AreaEstimates/Resources"):
                         for child in item:
                             res_dict[node.name][child.tag] = child.text
+                else:
+                    warnings.warn(
+                        """Could not find report files, values will be set to zero
+                        for this node. Please run "PrepareIP" transformation and
+                        "HLSSynthIP" first to generate the report files"""
+                    )
+                
+                if os.path.isfile(rptfile):
+                    df = pd.read_csv(rptfile)
+
+                    #get the indexes of the rows which contain 'Utilization', they mark the start and the end of the Utilization estimates table
+                    indexes = df[df.apply(lambda r: r.str.contains('Utilization', case=False).any(), axis=1)].index.values.astype(int)
+                    df = df[indexes[0]:indexes[1]]
+                    df = df[df.apply(lambda row: row.str.contains('Memory|LUT').any(), axis=1)]
+
+                    #change the current df headers with the first row of the Utilization estimates table
+                    new_header = df.iloc[0]
+                    df = df[1:]
+                    df.columns = new_header
+                    
+                    columns = df.columns[0].split('|')
+                    row = df.iloc[0]
+                    row = row[0].split('|')
+
+                    #get rid of empty strings
+                    columns = [x for x in columns if x] 
+                    row = [x for x in row if x]
+
+                    #strip all whitespaces from strings
+                    for column in columns:
+                        columns[columns.index(column)] = column.strip()
+                    for value in row:
+                        row[row.index(value)] = value.strip()
+
+                    dict_est = dict(zip(columns, row))
+                    res_dict[node.name]['LUTRAMs'] = dict_est['LUT']
                 else:
                     warnings.warn(
                         """Could not find report files, values will be set to zero
