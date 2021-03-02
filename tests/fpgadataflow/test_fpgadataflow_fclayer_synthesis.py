@@ -58,9 +58,20 @@ from finn.transformation.fpgadataflow.annotate_resources import AnnotateResource
 from finn.analysis.fpgadataflow.get_timing import get_timing
 import csv
 
+<<<<<<< Updated upstream
 filename  = "fclayer_resources.csv"
 FPGA = "xc7z020clg400-1"
 BOARD = "Pynq-Z1"
+=======
+from finn.util.gdrive import *
+import subprocess
+from finn.util.basic import pynq_part_map
+
+BOARD = "ZCU104"
+#BOARD = "Pynq-Z1"
+#FPGA = "xczu7ev-ffvc1156-2-e"
+FPGA = pynq_part_map[BOARD]
+>>>>>>> Stashed changes
 TARGET_CLK_PERIOD = 5
 
 def make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T=None, tdt=None):
