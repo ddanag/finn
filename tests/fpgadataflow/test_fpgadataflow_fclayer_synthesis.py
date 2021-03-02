@@ -53,14 +53,20 @@ import finn.transformation.fpgadataflow.convert_to_hls_layers as to_hls
 from finn.transformation.fpgadataflow.insert_fifo import InsertFIFO
 from finn.transformation.streamline import Streamline
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
+from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 from finn.transformation.fpgadataflow.annotate_resources import AnnotateResources
 
+from finn.transformation.fpgadataflow.cleanup import CleanUp
 from finn.analysis.fpgadataflow.get_timing import get_timing
-import csv
 
-filename  = "fclayer_resources.csv"
-FPGA = "xc7z020clg400-1"
-BOARD = "Pynq-Z1"
+from finn.util.gdrive import *
+import subprocess
+from finn.util.basic import pynq_part_map
+
+#FPGA = "xczu7ev-ffvc1156-2-e"
+BOARD = "ZCU104"
+#BOARD = "Pynq-Z1"
+FPGA = pynq_part_map[BOARD]
 TARGET_CLK_PERIOD = 5
 
 def make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T=None, tdt=None):
@@ -144,7 +150,7 @@ def prepare_inputs(input_tensor, idt, wdt):
         return {"inp": input_tensor}
 
 def ram_efficiency_hls(ram_type, ram_hls, wdt, mw, mh):
-    bitwidth = wdt.bitwidth()
+    bitwidth =wdt.bitwidth()
 
     if ram_hls == 0:
         return 1
@@ -155,73 +161,71 @@ def ram_efficiency_hls(ram_type, ram_hls, wdt, mw, mh):
     elif ram_type == "URAM":
         return (bitwidth * mw * mh)/(ram_hls * 72 * 4096) #wbits/uram_capacity
 
-headers =   ["FPGA", "mh", "mw", "nf", "sf", "pe", "simd", "act", "wdt", "idt", "mem_mode", "Resources from:",
-             "LUT", "LUTRAMs", "FF", "SRL", "DSP", "BRAM_18K", "BRAM_36K", "Total_BRAM_18K", "BRAM_efficiency", "URAM", 
-             "URAM_efficiency", "Carry", "TargetClockPeriod", "EstimatedClockPeriod", "Delay", "TargetClockFrequency [MHz]",
-             "EstimatedClockFrequency [MHz]"]
-             
-def csv_file_init():
-    global headers
-    with open(filename, 'w') as csvfile:
-        csvwriter = csv.writer(csvfile)
-        csvwriter.writerow(headers)
+headers = ["FPGA", "mh", "mw", "nf", "sf", "pe", "simd", "act", "wdt", "idt", "mem_mode", "Resources from:",
+            "LUT", "LUTRAM", "FF", "SRL", "DSP", "BRAM", "BRAM_18K", "BRAM_36K", "Total_BRAM_18K", "BRAM_efficiency", "URAM", 
+            "URAM_efficiency", "Carry", "TargetClockPeriod", "EstimatedClockPeriod", "Delay", "TargetClockFrequency [MHz]",
+            "EstimatedClockFrequency [MHz]", "finn_commit", "vivado_version", "vivado_build_no"]
 
-counter = 0
-def add_to_csv_file(test_parameters, resources):
-    global counter, headers
-    if counter == 0:
-        csv_file_init()
-        counter = 1
+config_headers = ["FPGA", "mh", "mw", "nf", "sf", "pe", "simd", "act", "wdt", "idt", "mem_mode", "Resources from:", "finn_commit", "vivado_version", "vivado_build_no"]
 
-    row = [-1] * len(headers)
-    row[headers.index("Total_BRAM_18K")] = 0
-    row[headers.index("DSP")] = 0
+def upload_data_to_fclayer_dashboard(test_parameters, resources):
 
+    data_dict = {key: -1 for key in headers} 
+    
     for header in headers:
         for key in test_parameters.keys():
             if header == key:
-                row[headers.index(header)] = test_parameters[key]
+                data_dict[header] = str(test_parameters[key])
         
         if header == "Resources from:":
-            row[headers.index(header)] = resources[0]
-        
+            data_dict[header] = resources[0]
+            data_dict["Total_BRAM_18K"] = 0
+            data_dict["DSP"] = 0
+
         res = eval(resources[1])
         for key in res.keys(): 
             if header == key and header != "DSP":
-                row[headers.index(header)] = res[key]
+                data_dict[header] = res[key]
 
                 if key == "BRAM_18K":
-                    row[headers.index("Total_BRAM_18K")] += int(res[key])
+                    data_dict["Total_BRAM_18K"] += int(res[key])
                 elif key == "BRAM_36K":
-                    row[headers.index("Total_BRAM_18K")] += 2* int(res[key])
+                    data_dict["Total_BRAM_18K"] += 2* int(res[key])
 
             elif "DSP" in key and "DSP" in header:
-                row[headers.index("DSP")] += int(res[key])
+                data_dict["DSP"] += int(res[key])
 
-        if len(resources) > 2:
-            timing = resources[2]
+        finn_commit_dict = resources[2]
+        data_dict["finn_commit"] = finn_commit_dict["finn_commit"]
+
+        if resources[0] == "synthesis":
+            data_dict["EstimatedClockPeriod"] = float(data_dict["TargetClockPeriod"]) - float(data_dict["Delay"])
+        elif len(resources) > 3:
+            timing = resources[3]
             for key in timing.keys(): 
                 if header == key:
-                    row[headers.index(header)] = timing[key]
-                    if resources[0] == "synthesis":
-                        row[headers.index("EstimatedClockPeriod")] = row[headers.index("TargetClockPeriod")] - float(timing[key])
-                    else:
-                        row[headers.index("Delay")] = row[headers.index("TargetClockPeriod")] - float(timing[key])
+                    data_dict[header] = timing[key]
+                    data_dict["Delay"] = float(data_dict["TargetClockPeriod"]) - float(timing[key])
     
     #add BRAM & URAM efficiencies for hls and synth
     if resources[0] == "hls" or  resources[0] == "synthesis":
-        row[headers.index("BRAM_efficiency")] = ram_efficiency_hls("BRAM",  int(row[headers.index("Total_BRAM_18K")]), test_parameters["wdt"], test_parameters["mw"], test_parameters["mh"])
-        if int(row[headers.index("URAM")]) != -1:
-            row[headers.index("URAM_efficiency")] = ram_efficiency_hls("URAM",  int(row[headers.index("URAM")]), test_parameters["wdt"], test_parameters["mw"], test_parameters["mh"])
-
+        data_dict["BRAM_efficiency"] = ram_efficiency_hls("BRAM",  int(data_dict["Total_BRAM_18K"]), test_parameters["wdt"], test_parameters["mw"], test_parameters["mh"])
+        if int(data_dict["URAM"]) != -1:
+            data_dict["URAM_efficiency"] = ram_efficiency_hls("URAM",  int(data_dict["URAM"]), test_parameters["wdt"], test_parameters["mw"], test_parameters["mh"])
+    
     #compute clock freq
-    row[headers.index("TargetClockFrequency [MHz]")] = 1/float(row[headers.index("TargetClockPeriod")]) * 1000
-    if row[headers.index("EstimatedClockPeriod")] != -1:
-        row[headers.index("EstimatedClockFrequency [MHz]")] = 1/float(row[headers.index("EstimatedClockPeriod")]) * 1000
+    data_dict["TargetClockFrequency [MHz]"] = 1/float(data_dict["TargetClockPeriod"]) * 1000
+    if data_dict["EstimatedClockPeriod"] != -1:
+        data_dict["EstimatedClockFrequency [MHz]"] = 1/float(data_dict["EstimatedClockPeriod"]) * 1000
+    
+    data_dict['vivado_build_no'] = int(data_dict['vivado_build_no'])
 
-    with open(filename, 'a+') as csvfile:
-        csvwriter = csv.writer(csvfile)
-        csvwriter.writerow(row)
+    #check if the configuration already exists in the worksheet
+    config_dict = {key: data_dict[key] for key in config_headers}
+    matched, row_index = search_in_resource_dashboard('FCLayer_resources', config_dict)
+    overwrite = matched
+
+    upload_to_resource_dashboard('FCLayer_resources', data_dict, overwrite, row_index)
 
 # mem_mode: const or decoupled
 @pytest.mark.parametrize("mem_mode", ["const", "decoupled", "external"])
@@ -241,6 +245,7 @@ def add_to_csv_file(test_parameters, resources):
 @pytest.mark.parametrize("mh", [16, 64, 128])
 @pytest.mark.slow
 @pytest.mark.vivado
+@pytest.mark.resource_estimation
 def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh):
     if nf == -1:
         nf = mh
@@ -297,16 +302,16 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh)
     # save the dataflow partition with a different name for easier access
     dataflow_model = ModelWrapper(dataflow_model_filename)
 
-    #Insert FIFO
-    dataflow_model = dataflow_model.transform(InsertFIFO())
     dataflow_model = dataflow_model.transform(GiveUniqueNodeNames())
 
     dataflow_model.save("my_fclayer_before_synth.onnx")
 
     test_parameters = {'FPGA': FPGA, 'mh': mh, 'mw': mw, 'nf': nf, 'sf': sf, 'pe': pe, 'simd': simd, 'act': act, 'wdt': wdt, 'idt': idt, 'mem_mode': mem_mode, 'TargetClockPeriod': TARGET_CLK_PERIOD}
-    
+    finn_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd="/workspace/finn")
+    finn_commit = finn_commit.decode("utf-8").strip()
+
     #PrepareIP, HLSSynthIP
-    dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD)) #fpgapart - zynq-7000, 5ns clk
+    dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
     dataflow_model = dataflow_model.transform(HLSSynthIP())
 
     #get estimated resources
@@ -314,41 +319,47 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh)
     dataflow_model_estimate.save("fclayer_model_estimate.onnx")
 
     estimate_resources = ["estimate"]
-    custom_ops_estimate = getCustomOp(dataflow_model_estimate.graph.node[1])
+    custom_ops_estimate = getCustomOp(dataflow_model_estimate.graph.node[0])
     estimate_resources.append(custom_ops_estimate.get_nodeattr("res_estimate"))
-    add_to_csv_file(test_parameters, estimate_resources)
+    estimate_resources.append({'finn_commit': finn_commit})
+
+    upload_data_to_fclayer_dashboard(test_parameters, estimate_resources)
 
     #get resources estimated by hls
     dataflow_model_hls = dataflow_model.transform(AnnotateResources(mode="hls"))
     dataflow_model_hls.save("fclayer_model_hls.onnx")
 
     hls_resources = ["hls"]
-    custom_ops_hls = getCustomOp(dataflow_model_hls.graph.node[1])
+    custom_ops_hls = getCustomOp(dataflow_model_hls.graph.node[0])
     hls_resources.append(custom_ops_hls.get_nodeattr("res_hls"))
-
+    hls_resources.append({'finn_commit': finn_commit})
+    
     #get EstimatedClockPeriod
     timing = get_timing(dataflow_model_hls, "hls")
-    hls_resources.append(timing[dataflow_model_hls.graph.node[1].name])
-    add_to_csv_file(test_parameters, hls_resources)
+    hls_resources.append(timing[dataflow_model_hls.graph.node[0].name])
 
-    #CreateStitchedIP, Build
-    dataflow_model = dataflow_model.transform(CreateStitchedIP(FPGA, TARGET_CLK_PERIOD))
-    dataflow_model = dataflow_model.transform(ZynqBuild(platform = BOARD, period_ns = TARGET_CLK_PERIOD))
+    upload_data_to_fclayer_dashboard(test_parameters, hls_resources)
 
-    #get resouces after synthesis
-    dataflow_model_synth = dataflow_model.transform(AnnotateResources(mode="synth"))
-    dataflow_model_synth.save("parent_fclayer_model_synth.onnx")
+    ####check if test config already exists in finn-resource-dashboard, skip synthesis if it does
+    config_dict = {'FPGA': FPGA, 'mh': mh, 'mw': mw, 'nf': nf, 'sf': sf, 'pe': pe, 'simd': simd, 'act': act, 'wdt': wdt, 'idt': idt, 'mem_mode': mem_mode, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'synthesis'}
+    matched, row_index = search_in_resource_dashboard('FCLayer_resources', config_dict)
+    if not matched:
+        #CreateStitchedIP, OutOfContextSynth
+        dataflow_model = dataflow_model.transform(CreateStitchedIP(FPGA, TARGET_CLK_PERIOD))
+        dataflow_model = dataflow_model.transform(SynthOutOfContext(part = FPGA, clk_period_ns = TARGET_CLK_PERIOD))
 
-    custom_ops_synth = getCustomOp(dataflow_model_synth.graph.node[1])
-    path_fclayer_model_synth = custom_ops_synth.get_nodeattr("model")
-    child_fclayer_model_synth = ModelWrapper(path_fclayer_model_synth)
-    child_fclayer_model_synth.save("child_fclayer_model_synth.onnx")
+        synthesis_resources = ["synthesis"]
+        ret = dataflow_model.get_metadata_prop("res_total_ooc_synth")
+        synthesis_resources.append(ret)
+        synthesis_resources.append({'finn_commit': finn_commit})
 
-    synthesis_resources = ["synthesis"]
-    custom_ops_synth_child = getCustomOp(child_fclayer_model_synth.graph.node[1])
-    synthesis_resources.append(custom_ops_synth_child.get_nodeattr("res_synth"))
+        upload_data_to_fclayer_dashboard(test_parameters, synthesis_resources)
 
-    #get delay
-    timing = get_timing(dataflow_model_synth, "synth")
-    synthesis_resources.append(timing)
-    add_to_csv_file(test_parameters, synthesis_resources)
+        dataflow_model.save("fclayer_model_after_ooosynth.onnx")
+    
+    model.transform(CleanUp())
+    dataflow_model_estimate.transform(CleanUp())
+    dataflow_model_hls.transform(CleanUp())
+    dataflow_model.transform(CleanUp())
+
+    #import pdb; pdb.set_trace()
