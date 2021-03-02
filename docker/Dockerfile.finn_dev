@@ -56,7 +56,8 @@ RUN pip install pytest-xdist==2.0.0
 RUN pip install pytest-parallel==0.1.0
 RUN pip install netron
 RUN pip install pandas
-RUN pip install pytest-split-tests 
+RUN pip install pytest-split-tests
+RUN pip install sklearn
 RUN pip install -e git+https://github.com/fbcotter/dataset_loading.git@0.0.4#egg=dataset_loading
 
 # switch user
@@ -71,7 +72,7 @@ USER $UNAME
 
 # cloning dependency repos (as user)
 # finn-base
-RUN git clone https://github.com/Xilinx/finn-base.git /workspace/finn-base
+RUN git clone https://github.com/ddanag/finn-base.git /workspace/finn-base
 # Brevitas
 RUN git clone https://github.com/Xilinx/brevitas.git /workspace/brevitas
 # CNPY
@@ -81,7 +82,7 @@ RUN git clone https://github.com/Xilinx/finn-hlslib.git /workspace/finn-hlslib
 # PyVerilator
 RUN git clone https://github.com/maltanar/pyverilator /workspace/pyverilator
 # oh-my-xilinx
-RUN git clone https://bitbucket.org/maltanar/oh-my-xilinx.git /workspace/oh-my-xilinx
+RUN git clone https://github.com/ddanag/oh-my-xilinx.git /workspace/oh-my-xilinx
 
 # for this developer-oriented Docker container we assume the FINN repo is cloned and mounted from the host
 # at /workspace/finn -- see run-docker.sh for an example of how to do this.
