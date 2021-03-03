@@ -52,7 +52,7 @@ def hls_synth_res_estimation(model):
             res_dict[node.name]["LUT"] = 0
             res_dict[node.name]["DSP48E"] = 0
             res_dict[node.name]["URAM"] = 0
-            res_dict[node.name]["LUTRAMs"] = 0
+            res_dict[node.name]["LUTRAM"] = 0
             
             inst = registry.getCustomOp(node)
             code_gen_dir = inst.get_nodeattr("code_gen_dir_ipgen")
@@ -111,7 +111,7 @@ def hls_synth_res_estimation(model):
                         row[row.index(value)] = value.strip()
 
                     dict_est = dict(zip(columns, row))
-                    res_dict[node.name]['LUTRAMs'] = dict_est['LUT']
+                    res_dict[node.name]['LUTRAM'] = dict_est['LUT']
                 else:
                     warnings.warn(
                         """Could not find report files, values will be set to zero
