@@ -256,6 +256,7 @@ def add_to_csv_file(test_parameters, resources):
 @pytest.mark.parametrize("dw", [0, 1])
 @pytest.mark.slow
 @pytest.mark.vivado
+@pytest.mark.resource_estimation
 def test_fpgadataflow_slidingwindow(
     idt, k, ifm_dim, ifm_ch, stride, sf, dw
 ):
@@ -347,4 +348,4 @@ def test_fpgadataflow_slidingwindow(
     synthesis_resources.append(timing)
     add_to_csv_file(test_parameters, synthesis_resources)
 
-    import pdb; pdb.set_trace()
+    #import pdb; pdb.set_trace()

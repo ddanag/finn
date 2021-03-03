@@ -141,7 +141,6 @@ def make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T=None, tdt=Non
         model.set_initializer("thresh", T)
     return model
 
-
 def prepare_inputs(input_tensor, idt, wdt):
     if wdt == DataType.BIPOLAR and idt == DataType.BIPOLAR:
         # convert bipolar to binary
