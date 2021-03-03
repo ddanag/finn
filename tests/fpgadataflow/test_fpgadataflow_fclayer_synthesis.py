@@ -242,10 +242,14 @@ def upload_data_to_fclayer_dashboard(test_parameters, resources):
 @pytest.mark.parametrize("mw", [16, 64, 128])
 # HLS matrix height (output features)
 @pytest.mark.parametrize("mh", [16, 64, 128])
+# Upload to google spreadsheet
+@pytest.mark.parametrize("upload", [True])
+# Remove artefacts
+@pytest.mark.parametrize("cleanup", [True])
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.resource_estimation
-def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh):
+def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh, upload, cleanup):
     if nf == -1:
         nf = mh
     if sf == -1:
@@ -322,7 +326,8 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh)
     estimate_resources.append(custom_ops_estimate.get_nodeattr("res_estimate"))
     estimate_resources.append({'finn_commit': finn_commit})
 
-    upload_data_to_fclayer_dashboard(test_parameters, estimate_resources)
+    if upload:
+        upload_data_to_fclayer_dashboard(test_parameters, estimate_resources)
 
     #get resources estimated by hls
     dataflow_model_hls = dataflow_model.transform(AnnotateResources(mode="hls"))
@@ -337,11 +342,17 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh)
     timing = get_timing(dataflow_model_hls, "hls")
     hls_resources.append(timing[dataflow_model_hls.graph.node[0].name])
 
-    upload_data_to_fclayer_dashboard(test_parameters, hls_resources)
+    if upload:
+        upload_data_to_fclayer_dashboard(test_parameters, hls_resources)
 
     ####check if test config already exists in finn-resource-dashboard, skip synthesis if it does
     config_dict = {'FPGA': FPGA, 'mh': mh, 'mw': mw, 'nf': nf, 'sf': sf, 'pe': pe, 'simd': simd, 'act': act, 'wdt': wdt, 'idt': idt, 'mem_mode': mem_mode, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'synthesis'}
-    matched, row_index = search_in_resource_dashboard('FCLayer_resources', config_dict)
+    
+    if upload:
+        matched, row_index = search_in_resource_dashboard('FCLayer_resources', config_dict)
+    else:
+        matched = True
+        
     if not matched:
         #CreateStitchedIP, OutOfContextSynth
         dataflow_model = dataflow_model.transform(CreateStitchedIP(FPGA, TARGET_CLK_PERIOD))
@@ -356,9 +367,8 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh)
 
         dataflow_model.save("fclayer_model_after_ooosynth.onnx")
     
-    model.transform(CleanUp())
-    dataflow_model_estimate.transform(CleanUp())
-    dataflow_model_hls.transform(CleanUp())
-    dataflow_model.transform(CleanUp())
-
-    #import pdb; pdb.set_trace()
+    if cleanup:
+        model.transform(CleanUp())
+        dataflow_model_estimate.transform(CleanUp())
+        dataflow_model_hls.transform(CleanUp())
+        dataflow_model.transform(CleanUp())
