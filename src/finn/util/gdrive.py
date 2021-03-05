@@ -62,16 +62,24 @@ def upload_to_end2end_dashboard(data_dict):
         col_letter = chr(ord("A") + colind)
         worksheet.update("%s2" % col_letter, vals[i])
 
-def create_worksheet_in_resource_dashboard(worksheet_name, no_of_rows, no_of_columns):
+def create_worksheet_in_resource_dashboard(worksheet_name, no_of_rows, headers):
     gdrive_key = "/workspace/finn/gdrive-key/finn-gdrive-key.json"
     if not os.path.isfile(gdrive_key):
         warnings.warn("Google Drive key not found, skipping dashboard upload")
         return
     gc = gspread.service_account(filename=gdrive_key)
     spreadsheet = gc.open("finn-resource-dashboard")
-    spreadsheet.add_worksheet(title=worksheet_name, rows=no_of_rows, cols=no_of_columns)
-
-    #DD should add 'add_headers' option
+    
+    #check if the worksheet exists, if not create one
+    try:
+        worksheet = spreadsheet.worksheet(worksheet_name)   
+    except:    
+        worksheet = spreadsheet.add_worksheet(title=worksheet_name, rows=no_of_rows, cols=len(headers))
+        # create header row
+        worksheet.update("A1:1", [headers])
+        # freeze and make header bold
+        worksheet.freeze(rows=1)
+        worksheet.format("A1:1", {"textFormat": {"bold": True}})
 
 def delete_worksheet_from_resource_dashboard(worksheet_name):
     gdrive_key = "/workspace/finn/gdrive-key/finn-gdrive-key.json"
