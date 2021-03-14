@@ -221,10 +221,10 @@ def upload_data_to_fclayer_dashboard(test_parameters, resources):
 
     #check if the configuration already exists in the worksheet
     config_dict = {key: data_dict[key] for key in config_headers}
-    matched, row_index = search_in_resource_dashboard('FCLayer_resources', config_dict)
+    matched, row_index = search_in_resource_dashboard('FCLayer_resources_old', config_dict)
     overwrite = matched
 
-    upload_to_resource_dashboard('FCLayer_resources', data_dict, overwrite, row_index)
+    upload_to_resource_dashboard('FCLayer_resources_old', data_dict, overwrite, row_index)
 
 # mem_mode: const or decoupled
 @pytest.mark.parametrize("mem_mode", ["const", "decoupled", "external"])
@@ -245,7 +245,7 @@ def upload_data_to_fclayer_dashboard(test_parameters, resources):
 # Upload to google spreadsheet
 @pytest.mark.parametrize("upload", [True])
 # Remove artefacts
-@pytest.mark.parametrize("cleanup", [True])
+@pytest.mark.parametrize("cleanup", [False])
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.resource_estimation
@@ -349,7 +349,7 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh,
     config_dict = {'FPGA': FPGA, 'mh': mh, 'mw': mw, 'nf': nf, 'sf': sf, 'pe': pe, 'simd': simd, 'act': act, 'wdt': wdt, 'idt': idt, 'mem_mode': mem_mode, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'synthesis'}
     
     if upload:
-        matched, row_index = search_in_resource_dashboard('FCLayer_resources', config_dict)
+        matched, row_index = search_in_resource_dashboard('FCLayer_resources_old', config_dict)
     else:
         matched = True
         

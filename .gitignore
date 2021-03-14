@@ -97,8 +97,11 @@ MANIFEST
 # generated files as part of end2end notebooks
 /notebooks/end2end_example/**/*.onnx
 
-# temp build folder
-temp/*
+# graphs folder from resource modelling
+/resource_modelling/graphs/*
+
+# excel files from scripts
+/resource_modelling/scripts/*.csv
 
 #saved onnx models
 /*.onnx

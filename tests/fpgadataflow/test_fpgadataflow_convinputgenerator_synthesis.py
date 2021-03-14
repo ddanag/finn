@@ -66,10 +66,11 @@ import csv
 
 from finn.util.onnx import nchw_to_nhwc
 
-filename  = "slidingwindow_resources.csv"
-FPGA = "xc7z020clg400-1"
-BOARD = "Pynq-Z1"
+BOARD = "ZCU104"
+FPGA = pynq_part_map[BOARD]
 TARGET_CLK_PERIOD = 5
+WORKSHEET_NAME = 'Sliding_Window_layer_resources'
+#WORKSHEET_NAME = 'Sliding_Window_layer_resources_test_set'
 
 def make_single_im2col_modelwrapper(k, ifm_ch, ifm_dim, ofm_dim, simd, stride, idt):
     odt = idt
@@ -103,7 +104,6 @@ def make_single_im2col_modelwrapper(k, ifm_ch, ifm_dim, ofm_dim, simd, stride, i
     model.set_tensor_datatype("outp", odt)
 
     return model
-
 
 def make_single_slidingwindow_modelwrapper(
     k, ifm_ch, ifm_dim, ofm_dim, simd, stride, idt, dw=0
@@ -144,12 +144,10 @@ def make_single_slidingwindow_modelwrapper(
 
     model.set_tensor_datatype("inp", idt)
     model.set_tensor_datatype("outp", odt)
-    ###
+
     model.set_tensor_layout("inp", ["N", "H", "W", "C"])
-    #nchw_to_nhwc(inp, model, idt, reverse=False)
 
     return model
-
 
 def prepare_inputs(input_tensor):
     return {"inp": input_tensor}
@@ -244,22 +242,14 @@ def add_to_csv_file(test_parameters, resources):
 @pytest.mark.parametrize("ifm_ch", [8, 16, 32])
 # Stride
 @pytest.mark.parametrize("stride", [1, 2])
-# execution mode
-#@pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim"])
-# input channel parallelism ("SIMD")
-#@pytest.mark.parametrize("simd", [1, 2])
-
 # synapse folding, -1 is maximum possible
 @pytest.mark.parametrize("sf", [-1, 2, 1])
-
 # depthwise
 @pytest.mark.parametrize("dw", [0, 1])
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.resource_estimation
-def test_fpgadataflow_slidingwindow(
-    idt, k, ifm_dim, ifm_ch, stride, sf, dw
-):
+def test_fpgadataflow_slidingwindow(idt, k, ifm_dim, ifm_ch, stride, sf, dw):
 
     if sf == -1:
         sf = ifm_ch
@@ -269,9 +259,7 @@ def test_fpgadataflow_slidingwindow(
     ofm_dim = int(((ifm_dim - k) / stride) + 1)
 
     x = gen_finn_dt_tensor(idt, (1, ifm_dim, ifm_dim, ifm_ch))
-    model = make_single_slidingwindow_modelwrapper(
-        k, ifm_ch, ifm_dim, ofm_dim, simd, stride, idt, dw
-    )
+    model = make_single_slidingwindow_modelwrapper(k, ifm_ch, ifm_dim, ofm_dim, simd, stride, idt, dw)
 
     #Streamlining
     model = model.transform(Streamline())

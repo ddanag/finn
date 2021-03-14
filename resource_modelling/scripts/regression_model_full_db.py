@@ -27,8 +27,6 @@ except OSError:
 else:
     print ("Successfully created the directory %s " % new_dir_path)
 
-filename  = "db_act.csv"
-
 #get all records from the selected worksheet
 list_of_dicts = get_records_from_resource_dashboard(worksheet_name)
 
@@ -43,32 +41,21 @@ fpga = df['FPGA'].iloc[0]
 #get synth data
 df = df[df.apply(lambda r: r.str.contains('synthesis', case=False).any(), axis=1)]
 
-#get records where mem_mode=external
-df = df[df['mem_mode'].astype(str) == 'external']
-
-#get records where act!=None
-df_act = df[df['act'].astype(str) != 'None']
-print('here1')
-print(df_act)
-df_act = df_act[df_act['act'].astype(str) != 'DataType.BIPOLAR']
-print('here2')
-print(df_act)
-#get records where act=None
-df_act_none = df[df['act'].astype(str) == 'None']
-
 def models(res_class):
 
     #encode wdt, idt
     labelencoder = LabelEncoder()
-    df_training['wdt_encoded'] = labelencoder.fit_transform(df_training['wdt'])
-    df_training['idt_encoded'] = labelencoder.fit_transform(df_training['idt'])
+    df['act_encoded'] = labelencoder.fit_transform(df['act'])
+    df['wdt_encoded'] = labelencoder.fit_transform(df['wdt'])
+    df['idt_encoded'] = labelencoder.fit_transform(df['idt'])
+    df['mem_mode_encoded'] = labelencoder.fit_transform(df['mem_mode'])
 
-    features = ['mh', 'mw', 'pe', 'simd', 'wdt_encoded', 'idt_encoded']
+    features = ['mh', 'mw', 'pe', 'simd', 'mem_mode_encoded', 'wdt_encoded', 'idt_encoded', 'act_encoded']
     #features = ['mh', 'mw', 'pe', 'simd']
     #extract features
-    X = df_training.loc[:, features].values
+    X = df.loc[:, features].values
     #extract target
-    Y = df_training.loc[:, [res_class]].values
+    Y = df.loc[:, [res_class]].values
 
     #split the data into train/test data sets 30% testing, 70% training
     X_train, X_test, Y_train, Y_test = model_selection.train_test_split(X, Y, test_size = 0.3, random_state=0)
@@ -101,7 +88,7 @@ def models(res_class):
 
     #get best hyperparameters and define the model
     best_params = grid_result.best_params_
-    best_svr = SVR(kernel=best_params["kernel"], C=best_params["C"], epsilon=best_params["epsilon"], gamma=best_params["gamma"])
+    best_svr = SVR(kernel='poly', C=best_params["C"], epsilon=best_params["epsilon"], gamma=best_params["gamma"])
     
     #train the SVR model
     best_svr = best_svr.fit(X_train, Y_train.ravel())
@@ -142,7 +129,7 @@ def generate_graph_test_set(parameter, res_class):
     
     leg = ax.legend()
     
-    fig.savefig('../graphs/%s/plot_%s_vs_%s_act_test.png' % (directory_name, 'pe', 'LUT'), bbox_inches='tight')
+    fig.savefig('../graphs/%s/plot_%s_vs_%s_full_test.png' % (directory_name, 'pe', 'LUT'), bbox_inches='tight')
 
 
 #get dataframe headers
@@ -163,50 +150,12 @@ for s in headers:
 #remove tools details: FPGA, finn_commit, vivado_version, vivado_build_no
 #remove timing 
 #remove act, mem_mode, Res from
-columns_to_remove = ['act', 'mem_mode', 'Resources from:', 'FPGA', 'finn_commit', 'vivado_version', 'vivado_build_no', 'TargetClockPeriod', 'EstimatedClockPeriod', 'Delay', 'TargetClockFrequency [MHz]', 'EstimatedClockFrequency [MHz]']
+columns_to_remove = ['Resources from:', 'FPGA', 'finn_commit', 'vivado_version', 'vivado_build_no', 'TargetClockPeriod', 'EstimatedClockPeriod', 'Delay', 'TargetClockFrequency [MHz]', 'EstimatedClockFrequency [MHz]']
 res_classes = [element for element in res_classes if element not in columns_to_remove]
 parameters = [element for element in parameters if element not in columns_to_remove]
 
-df_act = df_act.drop(columns_to_remove, axis=1)
-df_act_none = df_act_none.drop(columns_to_remove, axis=1)
-
 print(parameters)
 print(res_classes)
-print(len(df_act))
-print(len(df_act_none))
-print(df_act)
-print(df_act_none)
-
-
-
-#isolate contribution of weights to overall resource utilization by subtracting resources of equivalent (mem_mode = external) configuration 
-df_training = pd.DataFrame(columns=list(df_act))
-
-with open(filename, 'w') as csvfile:
-    csvwriter = csv.writer(csvfile)
-    csvwriter.writerow(list(df_training))
-
-found_row = False
-for index, row1 in df_act_none.iterrows():
-    for index, row2 in df_act.iterrows():
-        for s in parameters:
-            if row1[s] == row2[s]:
-                found_row = True
-            else:
-                found_row = False
-                break
-        if found_row == True:
-            print(row1)
-            print(row2)
-            for res in res_classes:
-                row2[res] = row2[res] - row1[res]
-            df_training = df_training.append(row2, ignore_index=True)
-
-            with open(filename, 'a+') as csvfile:
-                csvwriter = csv.writer(csvfile)
-                csvwriter.writerow(row2)
-
-print(df_training)
 
 #for testing
 parameters = ['pe']

@@ -11,6 +11,9 @@ from sklearn import model_selection
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import cross_val_score
+from sklearn.compose import TransformedTargetRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import MinMaxScaler
 import os, csv
 
 #define the worksheet name from finn-resource-dashboard
@@ -79,17 +82,21 @@ def models(res_class):
     Y_predict_linear = linear_reg_model.predict(X_test)
     score_linear = linear_reg_model.score(X_test, Y_test)
 
+    ####
+    #model_pipeline = Pipeline([('model', TransformedTargetRegressor(regressor = SVR(max_iter=20000000), transformer=MinMaxScaler()))])
+    model_pipeline = TransformedTargetRegressor(regressor = SVR(max_iter = 20000000), transformer=MinMaxScaler())
     #search for the best SVR hyperparameters
     gscv = GridSearchCV(
-        estimator=SVR(max_iter=20000000),
+        estimator=model_pipeline,
         param_grid={
-            'kernel': ['linear', 'poly', 'rbf', 'sigmoid'],
-            'C': [0.1, 1, 10, 100, 1000],
-            'epsilon': [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10],
-            'gamma': [0.0001, 0.001, 0.005, 0.1, 1, 3, 5]
-            #'C': [100],
-            #'epsilon': [5],
-            #'gamma': [0.005]
+            #'kernel': ['linear', 'poly', 'rbf', 'sigmoid'],
+            #'model__regressor__C': [0.1, 1, 10, 100, 1000],
+            #'model__regressor__epsilon': [0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10],
+            #'model__regressor__gamma': [0.0001, 0.001, 0.005, 0.1, 1, 3, 5]
+            'regressor__kernel': ['poly'],
+            'regressor__C': [1],
+            'regressor__epsilon': [1],
+            'regressor__gamma': [0.01]
         },
         cv=5, n_jobs = -1, verbose = 2)
 
@@ -101,22 +108,29 @@ def models(res_class):
 
     #get best hyperparameters and define the model
     best_params = grid_result.best_params_
-    best_svr = SVR(kernel=best_params["kernel"], C=best_params["C"], epsilon=best_params["epsilon"], gamma=best_params["gamma"])
-    
+    best_svr = SVR(kernel='poly', C=best_params["regressor__C"], epsilon=best_params["regressor__epsilon"], gamma=best_params["regressor__gamma"])
+    #best_svr = TransformedTargetRegressor(regressor = SVR(kernel=best_params["regressor__kernel"], C=best_params["regressor__C"], epsilon=best_params["regressor__epsilon"], gamma=best_params["regressor__gamma"]), transformer=MinMaxScaler())
     #train the SVR model
     best_svr = best_svr.fit(X_train, Y_train.ravel())
 
     Y_predict_svr = best_svr.predict(X_test)
-
+    #Y_predict_svr = grid_result.predict(X_test)
     print(X_test)
 
     print(best_svr.score(X_test, Y_test))
+    #print('grid score')
+    #print(grid_result.score(X_test, Y_test))
 
     #cross-validation
-    scores = cross_val_score(best_svr, X, Y.ravel(), cv=5)
-    print(scores)
+    svr_scores = cross_val_score(best_svr, X, Y.ravel(), scoring='neg_mean_absolute_error', cv=10)
+    svr_scores = np.absolute(svr_scores)
+    print('Mean MAE SVR:', np.mean(svr_scores))
 
+    lin_scores = cross_val_score(linear_reg_model, X, Y.ravel(), scoring='neg_mean_absolute_error', cv=10)
+    lin_scores = np.absolute(lin_scores)
+    print('Mean MAE linear:', np.mean(lin_scores))
 
+    #return X_test, Y_test, Y_predict_svr, grid_result.score(X_test, Y_test), Y_predict_linear, score_linear
     return X_test, Y_test, Y_predict_svr, best_svr.score(X_test, Y_test), Y_predict_linear, score_linear
 
 def generate_graph_test_set(parameter, res_class):
@@ -142,7 +156,7 @@ def generate_graph_test_set(parameter, res_class):
     
     leg = ax.legend()
     
-    fig.savefig('../graphs/%s/plot_%s_vs_%s_act_test.png' % (directory_name, 'pe', 'LUT'), bbox_inches='tight')
+    fig.savefig('../graphs/%s/plot_%s_vs_%s_act_target_scaling_test.png' % (directory_name, 'pe', 'LUT'), bbox_inches='tight')
 
 
 #get dataframe headers
