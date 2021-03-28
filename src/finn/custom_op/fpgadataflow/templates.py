@@ -102,6 +102,7 @@ set_part $config_proj_part
 config_compile -ignore_long_run_time -disable_unroll_code_size_check
 config_interface -m_axi_addr64
 config_rtl -auto_prefix
+config_schedule -relax_ii_for_timing=$RELAX_II_FOR_TIMING$
 $EXTRA_DIRECTIVES$
 
 create_clock -period $config_clkperiod -name default
