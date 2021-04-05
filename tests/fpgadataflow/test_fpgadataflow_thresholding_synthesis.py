@@ -298,7 +298,7 @@ def test_fpgadataflow_thresholding_synthesis(idt, act, nf, ich, mem_mode, ram_st
             if upload:
                 upload_data_to_thresholding_dashboard(test_parameters, synthesis_resources)
 
-            dataflow_model.save("thresholding_model_after_ooosynth.onnx")
+            dataflow_model.save("thresholding_model_after_oocsynth.onnx")
         
         #skip getting hls estimates if config_dict already exists in finn-resource-dashboard
         config_dict = {'FPGA': FPGA, 'ich': ich, 'nf': nf, 'pe': pe, 'idt': idt, 'act': act, 'mem_mode': mem_mode, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'hls'}
@@ -354,3 +354,4 @@ def test_fpgadataflow_thresholding_synthesis(idt, act, nf, ich, mem_mode, ram_st
         if cleanup:
             model.transform(CleanUp())
             dataflow_model.transform(CleanUp())
+            
