@@ -30,7 +30,7 @@ import pytest
 
 import numpy as np
 from onnx import TensorProto, helper
-
+import os, subprocess
 from finn.custom_op.registry import getCustomOp
 import finn.core.onnx_exec as oxe
 import finn.custom_op.general.xnorpopcount as xp
@@ -48,7 +48,7 @@ from finn.transformation.general import GiveReadableTensorNames
 from finn.transformation.infer_data_layouts import InferDataLayouts
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.util.basic import calculate_signed_dot_prod_range, gen_finn_dt_tensor
-from finn.util.basic import pynq_part_map
+from finn.util.basic import pynq_part_map, alveo_part_map
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
@@ -63,6 +63,9 @@ from finn.transformation.fpgadataflow.annotate_resources import AnnotateResource
 from finn.transformation.infer_shapes import InferShapes
 from finn.analysis.fpgadataflow.get_timing import get_timing
 from finn.util.onnx import nchw_to_nhwc
+from finn.util.gdrive import *
+from finn.transformation.fpgadataflow.cleanup import CleanUp
+from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 
 BOARD = "U250"
 FPGA = alveo_part_map[BOARD]
@@ -234,7 +237,7 @@ def upload_data_to_swu_dashboard(test_parameters, resources):
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.resource_estimation
-def test_fpgadataflow_slidingwindow(idt, k, ifm_dim, ifm_ch, stride, sf, dw, ram_style, upload, cleanup):
+def test_fpgadataflow_convinputgenerator_synthesis(idt, k, ifm_dim, ifm_ch, stride, sf, dw, ram_style, upload, cleanup):
 
     if sf == -1:
         sf = ifm_ch

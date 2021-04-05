@@ -349,8 +349,8 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh,
         synthesis_resources.append({'finn_commit': finn_commit})
 
         ret = eval(ret)
-            vivado_version = ret['vivado_version']
-            vivado_build_no = ret['vivado_build_no']
+        vivado_version = ret['vivado_version']
+        vivado_build_no = ret['vivado_build_no']
 
         if upload:
             upload_data_to_fclayer_dashboard(test_parameters, synthesis_resources)
