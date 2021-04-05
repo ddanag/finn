@@ -60,7 +60,7 @@ from finn.transformation.fpgadataflow.cleanup import CleanUp
 from finn.analysis.fpgadataflow.get_timing import get_timing
 
 from finn.util.gdrive import *
-import subprocess
+import os, subprocess
 from finn.util.basic import pynq_part_map
 
 #FPGA = "xczu7ev-ffvc1156-2-e"
@@ -68,6 +68,7 @@ BOARD = "ZCU104"
 #BOARD = "Pynq-Z1"
 FPGA = pynq_part_map[BOARD]
 TARGET_CLK_PERIOD = 5
+WORKSHEET_NAME = 'FClayer_resources'
 
 def make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T=None, tdt=None):
     mw = W.shape[0]
@@ -196,7 +197,10 @@ def upload_data_to_fclayer_dashboard(test_parameters, resources):
 
         finn_commit_dict = resources[2]
         data_dict["finn_commit"] = finn_commit_dict["finn_commit"]
-
+        if resources[0] == "hls" or resources[0] == "estimate":
+            data_dict["vivado_version"] = finn_commit_dict["vivado_version"]
+            data_dict["vivado_build_no"] = finn_commit_dict["vivado_build_no"]
+            
         if resources[0] == "synthesis":
             data_dict["EstimatedClockPeriod"] = float(data_dict["TargetClockPeriod"]) - float(data_dict["Delay"])
         elif len(resources) > 3:
@@ -221,10 +225,10 @@ def upload_data_to_fclayer_dashboard(test_parameters, resources):
 
     #check if the configuration already exists in the worksheet
     config_dict = {key: data_dict[key] for key in config_headers}
-    matched, row_index = search_in_resource_dashboard('FCLayer_resources_old', config_dict)
+    matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
     overwrite = matched
 
-    upload_to_resource_dashboard('FCLayer_resources_old', data_dict, overwrite, row_index)
+    upload_to_resource_dashboard(WORKSHEET_NAME, data_dict, overwrite, row_index)
 
 # mem_mode: const or decoupled
 @pytest.mark.parametrize("mem_mode", ["const", "decoupled", "external"])
@@ -245,7 +249,7 @@ def upload_data_to_fclayer_dashboard(test_parameters, resources):
 # Upload to google spreadsheet
 @pytest.mark.parametrize("upload", [True])
 # Remove artefacts
-@pytest.mark.parametrize("cleanup", [False])
+@pytest.mark.parametrize("cleanup", [True])
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.resource_estimation
@@ -287,7 +291,12 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh,
             tdt = DataType.INT32
 
     model = make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T, tdt)
-
+    
+    #use this only if worksheet doesn't exist in dashboard 
+    #(Avoid using this function or checking everytime if the worksheet exists to avoid reaching the gspread usage limits (number of requests per project/user))
+    #create_worksheet_in_resource_dashboard(WORKSHEET_NAME, 10, headers)
+    #import pdb; pdb.set_trace()
+    
     #Streamlining
     model = model.transform(Streamline())
 
@@ -302,56 +311,32 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh,
     sdp_node = getCustomOp(sdp_node)
     dataflow_model_filename = sdp_node.get_nodeattr("model")
 
-    # save the dataflow partition with a different name for easier access
+    #save the dataflow partition with a different name for easier access
     dataflow_model = ModelWrapper(dataflow_model_filename)
 
     dataflow_model = dataflow_model.transform(GiveUniqueNodeNames())
 
-    dataflow_model.save("my_fclayer_before_synth.onnx")
+    dataflow_model.save("fclayer_before_synth.onnx")
 
     test_parameters = {'FPGA': FPGA, 'mh': mh, 'mw': mw, 'nf': nf, 'sf': sf, 'pe': pe, 'simd': simd, 'act': act, 'wdt': wdt, 'idt': idt, 'mem_mode': mem_mode, 'TargetClockPeriod': TARGET_CLK_PERIOD}
     finn_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd="/workspace/finn")
     finn_commit = finn_commit.decode("utf-8").strip()
 
-    #PrepareIP, HLSSynthIP
+    #PrepareIP, #HLSSynthIP
     dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
     dataflow_model = dataflow_model.transform(HLSSynthIP())
 
-    #get estimated resources
-    dataflow_model_estimate = dataflow_model.transform(AnnotateResources(mode="estimate"))
-    dataflow_model_estimate.save("fclayer_model_estimate.onnx")
-
-    estimate_resources = ["estimate"]
-    custom_ops_estimate = getCustomOp(dataflow_model_estimate.graph.node[0])
-    estimate_resources.append(custom_ops_estimate.get_nodeattr("res_estimate"))
-    estimate_resources.append({'finn_commit': finn_commit})
-
-    if upload:
-        upload_data_to_fclayer_dashboard(test_parameters, estimate_resources)
-
-    #get resources estimated by hls
-    dataflow_model_hls = dataflow_model.transform(AnnotateResources(mode="hls"))
-    dataflow_model_hls.save("fclayer_model_hls.onnx")
-
-    hls_resources = ["hls"]
-    custom_ops_hls = getCustomOp(dataflow_model_hls.graph.node[0])
-    hls_resources.append(custom_ops_hls.get_nodeattr("res_hls"))
-    hls_resources.append({'finn_commit': finn_commit})
-    
-    #get EstimatedClockPeriod
-    timing = get_timing(dataflow_model_hls, "hls")
-    hls_resources.append(timing[dataflow_model_hls.graph.node[0].name])
-
-    if upload:
-        upload_data_to_fclayer_dashboard(test_parameters, hls_resources)
-
-    ####check if test config already exists in finn-resource-dashboard, skip synthesis if it does
+    #skip out of context synthesis if config_dict already exists in finn-resource-dashboard
     config_dict = {'FPGA': FPGA, 'mh': mh, 'mw': mw, 'nf': nf, 'sf': sf, 'pe': pe, 'simd': simd, 'act': act, 'wdt': wdt, 'idt': idt, 'mem_mode': mem_mode, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'synthesis'}
     
+    #TODO have to get this from vivado (tcl script) + add to config_dicts
+    vivado_version = '2020.1'
+    vivado_build_no = '2902540'
+
     if upload:
-        matched, row_index = search_in_resource_dashboard('FCLayer_resources_old', config_dict)
+        matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
     else:
-        matched = True
+        matched = False
         
     if not matched:
         #CreateStitchedIP, OutOfContextSynth
@@ -363,12 +348,65 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh,
         synthesis_resources.append(ret)
         synthesis_resources.append({'finn_commit': finn_commit})
 
-        upload_data_to_fclayer_dashboard(test_parameters, synthesis_resources)
+        ret = eval(ret)
+            vivado_version = ret['vivado_version']
+            vivado_build_no = ret['vivado_build_no']
 
-        dataflow_model.save("fclayer_model_after_ooosynth.onnx")
+        if upload:
+            upload_data_to_fclayer_dashboard(test_parameters, synthesis_resources)
+
+        dataflow_model.save("fclayer_model_after_oocsynth.onnx")
+
+    #skip getting hls estimates if config_dict already exists in finn-resource-dashboard
+    config_dict = {'FPGA': FPGA, 'mh': mh, 'mw': mw, 'nf': nf, 'sf': sf, 'pe': pe, 'simd': simd, 'act': act, 'wdt': wdt, 'idt': idt, 'mem_mode': mem_mode, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'hls'}
+    
+    if upload:
+        matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
+    else:
+        matched = False
+
+    if not matched:   
+        #get resources estimated by hls
+        dataflow_model_hls = dataflow_model.transform(AnnotateResources(mode="hls"))
+        dataflow_model_hls.save("fclayer_model_hls.onnx")
+
+        hls_resources = ["hls"]
+        custom_ops_hls = getCustomOp(dataflow_model_hls.graph.node[0])
+        hls_resources.append(custom_ops_hls.get_nodeattr("res_hls"))
+        hls_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
+        
+        #get EstimatedClockPeriod
+        timing = get_timing(dataflow_model_hls, "hls")
+        hls_resources.append(timing[dataflow_model_hls.graph.node[0].name])
+
+        if upload:
+            upload_data_to_fclayer_dashboard(test_parameters, hls_resources)
+        if cleanup:
+                dataflow_model_hls.transform(CleanUp())
+
+    #skip getting finn estimates if config_dict already exists in finn-resource-dashboard
+    config_dict = {'FPGA': FPGA, 'mh': mh, 'mw': mw, 'nf': nf, 'sf': sf, 'pe': pe, 'simd': simd, 'act': act, 'wdt': wdt, 'idt': idt, 'mem_mode': mem_mode, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'estimate'}   
+    
+    if upload:
+        matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
+    else:
+        matched = False
+        
+    if not matched:
+        #get estimated resources
+        dataflow_model_estimate = dataflow_model.transform(AnnotateResources(mode="estimate"))
+        dataflow_model_estimate.save("fclayer_model_estimate.onnx")
+
+        estimate_resources = ["estimate"]
+        custom_ops_estimate = getCustomOp(dataflow_model_estimate.graph.node[0])
+        estimate_resources.append(custom_ops_estimate.get_nodeattr("res_estimate"))
+        estimate_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
+
+        if upload:
+            upload_data_to_fclayer_dashboard(test_parameters, estimate_resources)
+        if cleanup:
+            dataflow_model_estimate.transform(CleanUp())
     
     if cleanup:
         model.transform(CleanUp())
-        dataflow_model_estimate.transform(CleanUp())
-        dataflow_model_hls.transform(CleanUp())
         dataflow_model.transform(CleanUp())
