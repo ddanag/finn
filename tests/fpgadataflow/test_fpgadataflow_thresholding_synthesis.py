@@ -34,7 +34,7 @@ import finn.core.onnx_exec as oxe
 from finn.core.datatype import DataType
 from finn.core.modelwrapper import ModelWrapper
 from finn.util.gdrive import *
-from finn.util.basic import pynq_part_map
+from finn.util.basic import pynq_part_map, alveo_part_map
 from finn.util.basic import gen_finn_dt_tensor
 from finn.analysis.fpgadataflow.get_timing import get_timing
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
@@ -52,11 +52,12 @@ from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.annotate_resources import AnnotateResources
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 
-BOARD = "ZCU104"
-FPGA = pynq_part_map[BOARD]
+#BOARD = "ZCU104"
+BOARD = "U250"
+FPGA = alveo_part_map[BOARD]
+#FPGA = pynq_part_map[BOARD]
 TARGET_CLK_PERIOD = 5
 WORKSHEET_NAME = 'Thresholding_layer_resources'
-#WORKSHEET_NAME = 'Thresholding_layer_resources_test_set'
 
 def make_single_thresholding_modelwrapper(T, pe, idt, odt, actval, mem_mode, ram_style):
     NumChannels = T.shape[0]
@@ -134,7 +135,7 @@ def upload_data_to_thresholding_dashboard(test_parameters, resources):
 
         finn_commit_dict = resources[2]
         data_dict["finn_commit"] = finn_commit_dict["finn_commit"]
-        if resources[0] == "hls":
+        if resources[0] == "hls" or resources[0] == "estimate":
             data_dict["vivado_version"] = finn_commit_dict["vivado_version"]
             data_dict["vivado_build_no"] = finn_commit_dict["vivado_build_no"]
 
@@ -162,21 +163,15 @@ def upload_data_to_thresholding_dashboard(test_parameters, resources):
     upload_to_resource_dashboard(WORKSHEET_NAME, data_dict, overwrite, row_index)
 
 # activation: None or DataType
-@pytest.mark.parametrize("act", [DataType.BIPOLAR, DataType.INT2, DataType.INT3, DataType.INT4])
-#additional configs for resource modelling test set
-#@pytest.mark.parametrize("act", [DataType.INT5, DataType.INT7, DataType.INT8])
+@pytest.mark.parametrize("act", [DataType.BIPOLAR, DataType.INT2, DataType.INT3, DataType.INT4, DataType.INT5])
 # input datatype
 @pytest.mark.parametrize("idt", [DataType.UINT12, DataType.UINT16, DataType.UINT20, DataType.UINT24, DataType.UINT28, DataType.UINT32])
-#additional configs for resource modelling test set
-#@pytest.mark.parametrize("idt", [DataType.UINT14, DataType.UINT18, DataType.UINT22, DataType.UINT26, DataType.UINT30])
 # folding, -1 is maximum possible
 @pytest.mark.parametrize("nf", [-1, 1, 2, 4, 8])
 # number of input features
-@pytest.mark.parametrize("ich", [16, 32, 64, 96, 128, 192, 256])
-#additional configs for resource modelling test set
-#@pytest.mark.parametrize("ich", [48, 80, 160, 320])
+@pytest.mark.parametrize("ich", [16, 32, 48, 64, 80, 96, 128, 160, 192, 256, 320])
 # memory mode
-@pytest.mark.parametrize("mem_mode", ["decoupled"])
+@pytest.mark.parametrize("mem_mode", ["const", "decoupled"])
 # ram style
 @pytest.mark.parametrize("ram_style", ["distributed", "block"])
 # Upload to google spreadsheet
@@ -234,7 +229,8 @@ def test_fpgadataflow_thresholding_synthesis(idt, act, nf, ich, mem_mode, ram_st
 
     model = make_single_thresholding_modelwrapper(T, pe, idt, odt, actval, mem_mode, ram_style)
     
-    ###
+    #use this only if worksheet doesn't exist in dashboard 
+    #(Avoid using this function or checking everytime if the worksheet exists to avoid reaching the gspread usage limits (number of requests per project/user))
     #create_worksheet_in_resource_dashboard(WORKSHEET_NAME, 10, headers)
     #import pdb; pdb.set_trace()
 
@@ -275,8 +271,8 @@ def test_fpgadataflow_thresholding_synthesis(idt, act, nf, ich, mem_mode, ram_st
 
         #skip out of context synthesis if config_dict already exists in finn-resource-dashboard
         config_dict = {'FPGA': FPGA, 'ich': ich, 'nf': nf, 'pe': pe, 'idt': idt, 'act': act, 'mem_mode': mem_mode, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'synthesis'}
-        
-        ###have to get this from vivado - tcl script
+
+        #TODO have to get this from vivado (tcl script) + add to config_dicts
         vivado_version = '2020.1'
         vivado_build_no = '2902540'
 
@@ -348,7 +344,7 @@ def test_fpgadataflow_thresholding_synthesis(idt, act, nf, ich, mem_mode, ram_st
             estimate_resources = ["estimate"]
             custom_ops_estimate = getCustomOp(dataflow_model_estimate.graph.node[0])
             estimate_resources.append(custom_ops_estimate.get_nodeattr("res_estimate"))
-            estimate_resources.append({'finn_commit': finn_commit})
+            estimate_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
 
             if upload:
                 upload_data_to_thresholding_dashboard(test_parameters, estimate_resources)
