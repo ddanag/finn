@@ -105,9 +105,7 @@ def make_single_im2col_modelwrapper(k, ifm_ch, ifm_dim, ofm_dim, simd, stride, i
 
     return model
 
-def make_single_slidingwindow_modelwrapper(
-    k, ifm_ch, ifm_dim, ofm_dim, simd, stride, idt, dw=0
-):
+def make_single_slidingwindow_modelwrapper(k, ifm_ch, ifm_dim, ofm_dim, simd, stride, idt, ram_style, dw=0):
     odt = idt
     inp = helper.make_tensor_value_info(
         "inp", TensorProto.FLOAT, [1, ifm_dim, ifm_dim, ifm_ch]
@@ -131,6 +129,7 @@ def make_single_slidingwindow_modelwrapper(
         inputDataType=idt.name,
         outputDataType=odt.name,
         depthwise=dw,
+        ram_style=ram_style
     )
     graph = helper.make_graph(
         nodes=[SlidingWindow_node],
@@ -247,7 +246,7 @@ def test_fpgadataflow_convinputgenerator_synthesis(idt, k, ifm_dim, ifm_ch, stri
     ofm_dim = int(((ifm_dim - k) / stride) + 1)
 
     x = gen_finn_dt_tensor(idt, (1, ifm_dim, ifm_dim, ifm_ch))
-    model = make_single_slidingwindow_modelwrapper(k, ifm_ch, ifm_dim, ofm_dim, simd, stride, idt, dw)
+    model = make_single_slidingwindow_modelwrapper(k, ifm_ch, ifm_dim, ofm_dim, simd, stride, idt, ram_style, dw)
     
     #use this only if worksheet doesn't exist in dashboard 
     #(Avoid using this function or checking everytime if the worksheet exists to avoid reaching the gspread usage limits (number of requests per project/user))
@@ -294,7 +293,7 @@ def test_fpgadataflow_convinputgenerator_synthesis(idt, k, ifm_dim, ifm_ch, stri
         matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
     else:
         matched = False
-        
+
     if not matched:
         #CreateStitchedIP, OutOfContextSynth
         dataflow_model = dataflow_model.transform(CreateStitchedIP(FPGA, TARGET_CLK_PERIOD))
@@ -321,7 +320,7 @@ def test_fpgadataflow_convinputgenerator_synthesis(idt, k, ifm_dim, ifm_ch, stri
         matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
     else:
         matched = False
-        
+
     if not matched:       
         #get resources estimated by hls
         dataflow_model_hls = dataflow_model.transform(AnnotateResources(mode="hls"))
