@@ -21,7 +21,7 @@ def clean_dataframe(df):
     #FINN estimate, HLS and Vivado synthesis. Removes everything else.
     #When splitting by the "Resources from:" column (estimate, hls, synthesis),
     #all 3 dataframes should have the same number of rows.
-    
+
     #It takes ~5 min for a dataframe with ~22k samples
 
     #get dataframe headers
@@ -53,9 +53,9 @@ def clean_dataframe(df):
     df_synth = df[df.apply(lambda r: r.str.contains('synthesis', case=False).any(), axis=1)]
     df_temp = df
     keep_rows_list = []
-
+    
     print("Started cleaning the dataframe")
-
+    
     #for each parameter configuration search for estimate, hls and synthesis rows
     for index_config, configuration in df_synth[parameters].iterrows():
         if index_config not in keep_rows_list:
@@ -63,7 +63,13 @@ def clean_dataframe(df):
             found_row_hls = 0
             found_row_synthesis = 0
             for index, row in df_temp.iterrows():
-                if configuration.isin(row).all():
+                #if configuration.isin(row).all(): -there's a problem with this returns true when it shouldn't    
+                flag = True
+                for key in configuration.keys():
+                    if configuration[key] != row[key]:     
+                        flag = False
+                        break
+                if flag == True:        
                     if row["Resources from:"] == "estimate":
                         found_row_estimate = 1
                         index_row_estimate = index
@@ -82,9 +88,8 @@ def clean_dataframe(df):
                 df_temp = df_temp.drop(index = index_row_estimate)
                 df_temp = df_temp.drop(index = index_row_hls)
                 df_temp = df_temp.drop(index = index_row_synthesis)
-    
+               
     df = df[df.index.isin(keep_rows_list)]
-    
     #sort the dataframe and reset index
     df = df.sort_values(parameters)
     df = df.reset_index(drop=True)
@@ -133,15 +138,12 @@ def extract_features_and_target(df, features, target):
     for feature in features:
         df[feature] = df[feature].apply(datatype_strip)
 
-    #TODO replace these with filter_dataframe function
     #get hls and finn estimate data
     df_hls = df[df.apply(lambda r: r.str.contains('hls', case=False).any(), axis=1)]
     df_finn_estimate = df[df.apply(lambda r: r.str.contains('estimate', case=False).any(), axis=1)]
     #get synth data
     df = df[df.apply(lambda r: r.str.contains('synthesis', case=False).any(), axis=1)]
-
-    #import pdb; pdb.set_trace()
-
+    
     #extract features (X, df - synth data)
     X = df.loc[:, features].values
     X_hls = df_hls.loc[:, features].values
@@ -151,14 +153,14 @@ def extract_features_and_target(df, features, target):
     Y = df.loc[:, target].values
     Y_hls = df_hls.loc[:, target].values
     Y_finn_estimate = df_finn_estimate.loc[:, target].values
-
+    
     #check if the estimate, hls and synth features dfs are identical
     assert (X == X_hls).all(), 'X_hls different from X'
     assert (X == X_finn_estimate).all(), 'X_finn_estimate different from X'
-
+    
     return X, Y, X_hls, Y_hls, X_finn_estimate, Y_finn_estimate
 
-def gridsearch_hyperparameters(X_train, Y_train):
+def gridsearch_hyperparameters(X_train, Y_train, epsilon_grid):
     #Returns an SVR estimator with hyperparameters tuned and fit on training data
     #Method to compute C - Source: Cherkassky, Vladimir & Ma, Yunqian. (2002). Selection of Meta-parameters for Support Vector Regression. Artif Neural Netw ICANN. 2002. 687-693. 10.1007/3-540-46084-5_112. 
 
@@ -168,26 +170,29 @@ def gridsearch_hyperparameters(X_train, Y_train):
     C=max(abs(mean + 3*std), abs(mean - 3*std))
 
     #search for the best SVR hyperparameters
-    best_svr = GridSearchCV(
+    gscv_svr = GridSearchCV(
         estimator=SVR(max_iter=-1),
         param_grid={
             'kernel': ['poly', 'rbf', 'sigmoid'],
             'gamma': ['scale'],
             'C': [C/10, max(abs(mean + std), abs(mean - std)), max(abs(mean + 2*std), abs(mean - 2*std)), max(abs(mean + 3*std), abs(mean - 3*std)), max(abs(mean + 4*std), abs(mean - 4*std)), max(abs(mean + 5*std), abs(mean - 5*std)), C*10],
-            'epsilon': [10, 20, 50, 100, 150, 200, 250, 500, 1000]
+            'epsilon': epsilon_grid
         },
         cv=10, scoring = 'r2', n_jobs = -1, refit = True, verbose = 2)
 
-    best_svr = best_svr.fit(X_train, Y_train)
-
-    print("Best hyperparameters set found on development set:", best_svr.best_params_)
-    #import pdb; pdb.set_trace()
+    gscv_svr = gscv_svr.fit(X_train, Y_train)
+    best_svr = gscv_svr.best_estimator_
+    print("Best hyperparameters set found on development set:", gscv_svr.best_params_)
     return best_svr
 
-def generate_regression_model(df, features, target, scaler_selection=1, test_set_size=0.3, train_test_split_random_seed=2021):
+def generate_regression_model(df, features, target, feature_scaler_selection=1, test_set_size=0.3, train_test_split_random_seed=2021, epsilon_dict={}, target_scaler = None):
     
+    #target_scaler:   0 - log
+    #                 1 - (synth-finn_estimate)
+    #                 None    
+
     X, Y, X_hls, Y_hls, X_finn_estimate, Y_finn_estimate = extract_features_and_target(df, features, target)
-    
+
     #split the data into train/test data sets - 30% testing, 70% training
     X_train, X_test, Y_train, Y_test = model_selection.train_test_split(X, Y, test_size = test_set_size, shuffle=True, random_state=train_test_split_random_seed)
     
@@ -195,86 +200,78 @@ def generate_regression_model(df, features, target, scaler_selection=1, test_set
     X_train_hls, X_test_hls, Y_train_hls, Y_test_hls = model_selection.train_test_split(X_hls, Y_hls, test_size = 0.3, shuffle=True, random_state=train_test_split_random_seed)
     X_train_finn_estimate, X_test_finn_estimate, Y_train_finn_estimate, Y_test_finn_estimate = model_selection.train_test_split(X_finn_estimate, Y_finn_estimate, test_size = 0.3, shuffle=True, random_state=train_test_split_random_seed)
 
-    #Feature Scaling - Normalization(scaler_selection=0)/Standardization(scaler_selection=1)
-    if scaler_selection:
-        scaler = StandardScaler().fit(X_train)
+    #Feature Scaling - Normalization(feature_scaler_selection=0)/Standardization(feature_scaler_selection=1)
+    if feature_scaler_selection:
+        feature_scaler = StandardScaler().fit(X_train)
     else:
-        scaler = MinMaxScaler().fit(X_train)
+        feature_scaler = MinMaxScaler().fit(X_train)
     
-    X_train = scaler.transform(X_train)
-    X_test = scaler.transform(X_test)
+    X_train = feature_scaler.transform(X_train)
+    X_test = feature_scaler.transform(X_test)
 
-    svr_estimator = gridsearch_hyperparameters(X_train, Y_train)
+    #Target Scaling/Preprocessing
+    if target_scaler == 1:
+        Y_train = Y_train - Y_train_finn_estimate
+    elif target_scaler == 0:
+        Y_train = np.log(Y_train)
+
+    if len(epsilon_dict) == 0:
+        if target_scaler != None:
+            epsilon_dict =  {   "LUT" : [0.001, 0.01, 0.1, 1, 2, 5, 10],
+                                "LUTRAM" : [0.001, 0.01, 0.1, 1, 2, 5, 10],
+                                "FF" : [0.001, 0.01, 0.1, 1, 2, 5],
+                                "SRL" : [],
+                                "DSP" : [],
+                                "Total_BRAM_18K": [0.1, 1, 10],
+                                "URAM": [1, 2, 5, 10, 15, 20],
+                                "Carry": [1, 2, 5, 10, 15, 20, 50, 100],
+                                "Delay": [0.001, 0.01, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5]
+                            }
+        else:
+            epsilon_dict =  {   "LUT" : [1, 2, 5, 10, 20, 50, 100, 150, 200, 250, 500, 1000],
+                                "LUTRAM" : [1, 2, 5, 10, 20, 50, 100, 150, 200, 250, 500, 1000],
+                                "FF" : [1, 2, 5, 10, 20, 50, 100, 150, 200, 250, 500],
+                                "SRL" : [],
+                                "DSP" : [],
+                                "Total_BRAM_18K": [0.1, 1, 10],
+                                "URAM": [1, 2, 5, 10, 15, 20],
+                                "Carry": [1, 2, 5, 10, 15, 20, 50, 100],
+                                "Delay": [0.001, 0.01, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5]
+                            }
+
+    svr_estimator = gridsearch_hyperparameters(X_train, Y_train, epsilon_dict[target])
 
     #cross-validation
     scores = cross_val_score(svr_estimator, X_train, Y_train, cv=10, scoring = 'r2')
+    
     print('Cross_val_scores:', scores)
     print('Cross_val_scores mean:', scores.mean())
     print('Cross_val_scores std:', scores.std())
 
-    return svr_estimator, scaler, X_test, Y_test, Y_test_hls, Y_test_finn_estimate
+    return svr_estimator, feature_scaler, target_scaler, X_test, Y_test, Y_test_hls, Y_test_finn_estimate
 
-def apply_scaler(scaler, X):
+def apply_feature_scaler(feature_scaler, X):
     
-    X = scaler.transform(X)    
+    X = feature_scaler.transform(X)    
     return X
 
-def compute_metrics(estimator, X_test, Y_test, Y_hls, Y_finn_estimate):
+def compute_metrics(estimator, target_scaler, X_test, Y_test, Y_hls, Y_finn_estimate):
     #Computes the R2 score of the estimator on test dataset (X_test, Y_test).
     #Computes the RMSE and Max Error between Y_test and Y_predicted/Y_hls/Y_finn_estimate.
 
-    print('R2 score test set:', estimator.score(X_test, Y_test))
-    
-    Y_predicted = estimator.predict(X_test)
-    
-    Y_relative_error_pred = (abs(Y_predicted - Y_test)/Y_test) * 100
-    Y_relative_error_hls = (abs(Y_hls - Y_test)/Y_test) * 100
-    Y_relative_error_estimate = (abs(Y_finn_estimate - Y_test)/Y_test) * 100
-    """
-    print(Y_test)
-    print(Y_predicted)
-    print(Y_relative_error_pred)
-    print(Y_hls)
-    print(Y_relative_error_hls)
-    
-    #compute means
-    df = pd.DataFrame()
-    df['Y_test'] = Y_test
-    df['Y_rel_pred'] = Y_relative_error_pred
-    df['Y_rel_hls'] = Y_relative_error_hls
-    df['Y_rel_est'] = Y_relative_error_estimate
-
-    df = df.sort_values('Y_test')
-    df = df.reset_index(drop=True)
-
-    print('0-1000 mean svr:', df['Y_rel_pred'][0:39].mean())
-    print('1000-6000 mean svr:', df['Y_rel_pred'][39:58].mean())
-    print('6000-12000 mean svr:', df['Y_rel_pred'][58:62].mean())
-
-    print('0-1000 mean hls:', df['Y_rel_hls'][0:39].mean())
-    print('1000-6000 mean hls:', df['Y_rel_hls'][39:58].mean())
-    print('6000-12000 mean hls:', df['Y_rel_hls'][58:62].mean())
-
-    print('0-1000 mean est:', df['Y_rel_est'][0:39].mean())
-    print('1000-6000 mean est:', df['Y_rel_est'][39:58].mean())
-    print('6000-12000 mean est:', df['Y_rel_est'][58:62].mean())
-    import pdb; pdb.set_trace()
-    
-    fig = plt.figure(figsize=(20, 11))
-    ax = fig.gca()
-
-    X_test = [col[1] for col in X_test]
-    print(X_test)
-
-    ax.scatter(Y_test, Y_relative_error_estimate, marker="o", s=200, facecolors='none', edgecolors='g', label='estimate')
-    ax.scatter(Y_test, Y_relative_error_hls, marker="^", s=500, facecolors='none', edgecolors='m', label='hls')
-    ax.scatter(Y_test, Y_relative_error_pred, marker="x", s=50, color='r', label='predicted')
-    ax.set_xlabel("LUTs")
-    ax.set_ylabel("Relative_error [%]")
-    leg = ax.legend()
-    ax.set_ylim([0,100])
-    fig.savefig('../graphs/plot_rel_error.png', bbox_inches='tight')
-    """
+    if target_scaler == 1:
+        Y_test= Y_test - Y_finn_estimate
+        print('R2 score test set:', estimator.score(X_test, Y_test))
+        Y_test = Y_test + Y_finn_estimate
+        Y_predicted = estimator.predict(X_test) + Y_finn_estimate
+    elif target_scaler == 0:
+        Y_test = np.log(Y_test)
+        print('R2 score test set:', estimator.score(X_test, Y_test))
+        Y_test = np.exp(Y_test)
+        Y_predicted = np.exp(estimator.predict(X_test))
+    else:
+        print('R2 score test set:', estimator.score(X_test, Y_test))
+        Y_predicted = estimator.predict(X_test)
 
     print('SVR Root Mean Squared Error:', mean_squared_error(Y_test, Y_predicted, squared = False))
     print('SVR Max Error:', max_error(Y_test, Y_predicted))
@@ -284,3 +281,107 @@ def compute_metrics(estimator, X_test, Y_test, Y_hls, Y_finn_estimate):
 
     print('FINN Estimate Root Mean Squared Error:', mean_squared_error(Y_test, Y_finn_estimate, squared = False))
     print('FINN Estimate Max Error:', max_error(Y_test, Y_finn_estimate))
+
+
+def plot_relative_error_graph(estimator, target_scaler, X_test, Y_test, Y_hls, Y_finn_estimate, target, directory_name):
+
+    if target_scaler == 1:
+        Y_predicted = estimator.predict(X_test) + Y_finn_estimate
+    elif target_scaler == 0:
+        Y_predicted = np.exp(estimator.predict(X_test))
+    else:
+        Y_predicted = estimator.predict(X_test)
+
+    Y_relative_error_pred = (abs(Y_predicted - Y_test)/Y_test) * 100
+    Y_relative_error_hls = (abs(Y_hls - Y_test)/Y_test) * 100
+    Y_relative_error_estimate = (abs(Y_finn_estimate - Y_test)/Y_test) * 100
+    
+    #compute mean relative error
+    df = pd.DataFrame()
+    df['Y_test'] = Y_test
+    df['Y_rel_pred'] = Y_relative_error_pred
+    df['Y_rel_hls'] = Y_relative_error_hls
+    df['Y_rel_est'] = Y_relative_error_estimate
+
+    df = df.sort_values('Y_test')
+    df = df.reset_index(drop=True)
+
+    df_s = df[df["Y_test"] < 1000]
+    df_m = df[(df["Y_test"] > 1000) & (df["Y_test"] < 10000)]
+    df_l = df[df["Y_test"] > 10000]
+
+    print("SVR Mean relative error:")
+    print("0-1000 LUTs", df_s["Y_rel_pred"].mean())
+    print("1000-10000", df_m["Y_rel_pred"].mean())
+    print("> 10000 LUTs", df_l["Y_rel_pred"].mean())
+
+    print("HLS Mean relative error:")
+    print("0-1000 LUTs", df_s["Y_rel_hls"].mean())
+    print("1000-10000", df_m["Y_rel_hls"].mean())
+    print("> 10000 LUTs", df_l["Y_rel_hls"].mean())
+
+    print("FINN Mean relative error:")
+    print("0-1000 LUTs", df_s["Y_rel_est"].mean())
+    print("1000-10000", df_m["Y_rel_est"].mean())
+    print("> 10000 LUTs", df_l["Y_rel_est"].mean())
+
+    fig = plt.figure(figsize=(20, 11))
+    ax = fig.gca()
+
+    X_test = [col[1] for col in X_test]
+
+    ax.scatter(Y_test, Y_relative_error_estimate, marker="o", s=200, facecolors='none', edgecolors='g', label='estimate')
+    ax.scatter(Y_test, Y_relative_error_hls, marker="^", s=500, facecolors='none', edgecolors='m', label='hls')
+    ax.scatter(Y_test, Y_relative_error_pred, marker="x", s=50, color='r', label='predicted')
+    ax.set_xlabel("%s" % target)
+    ax.set_ylabel("Relative_error [%]")
+    leg = ax.legend()
+    fig.savefig('../graphs/%s/plot_rel_error_vs_%s.png' % (directory_name, target), bbox_inches='tight')
+    
+    ax.set_ylim([0,100])
+    fig.savefig('../graphs/%s/plot_rel_error_vs_%s_zoom.png' % (directory_name, target), bbox_inches='tight')
+
+def plot_pareto_frontier_graph(estimator, target_scaler, X_test, Y_test, Y_hls, Y_finn_estimate, target, directory_name):
+    
+    if target_scaler == 1:
+        Y_predicted = estimator.predict(X_test) + Y_finn_estimate
+    elif target_scaler == 0:
+        Y_predicted = np.exp(estimator.predict(X_test))
+    else:
+        Y_predicted = estimator.predict(X_test)
+
+    df = pd.DataFrame()
+    df['Y_test'] = Y_test
+    df['Y_predicted'] = Y_predicted
+    df['Y_hls'] = Y_hls
+    df['Y_finn_estimate'] = Y_finn_estimate
+
+    df = df.sort_values('Y_test')
+    df = df.reset_index(drop=True)
+
+    for index, row in df.iterrows():
+        pred = abs(row['Y_test'] - row['Y_predicted'])
+        hls = abs(row['Y_test'] - row['Y_hls'])
+        finn = abs(row['Y_test'] - row['Y_finn_estimate'])
+        if (pred < hls) and (pred < finn):
+            df.at[index, 'Y_hls'] = -1000
+            df.at[index, 'Y_finn_estimate'] = -1000
+        elif (hls < pred) and (hls < finn):
+            df.at[index, 'Y_predicted'] = -1000
+            df.at[index, 'Y_finn_estimate'] = -1000
+        elif (finn < pred) and (finn < hls):
+            df.at[index, 'Y_predicted'] = -1000
+            df.at[index, 'Y_hls'] = -1000
+
+    fig = plt.figure(figsize=(20, 11))
+    ax = fig.gca()
+
+    ax.scatter(df['Y_test'], df['Y_finn_estimate'], marker="o", s=200, facecolors='none', edgecolors='g', label='estimate')
+    ax.scatter(df['Y_test'], df['Y_hls'], marker="^", s=300, facecolors='none', edgecolors='m', label='hls')
+    ax.scatter(df['Y_test'],  df['Y_predicted'], marker="x", s=50, color='r', label='predicted')
+    ax.set_xlabel("%s" % target)
+    ax.set_ylabel("Closest estimation")
+    leg = ax.legend()
+    
+    ax.set_ylim(bottom=0)
+    fig.savefig('../graphs/%s/plot_pareto_%s.png' % (directory_name, target), bbox_inches='tight')
