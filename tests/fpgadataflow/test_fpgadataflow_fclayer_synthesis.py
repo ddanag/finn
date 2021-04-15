@@ -61,16 +61,14 @@ from finn.analysis.fpgadataflow.get_timing import get_timing
 
 from finn.util.gdrive import *
 import os, subprocess
-from finn.util.basic import pynq_part_map
+from finn.util.basic import pynq_part_map, alveo_part_map
 
-#FPGA = "xczu7ev-ffvc1156-2-e"
-BOARD = "ZCU104"
-#BOARD = "Pynq-Z1"
-FPGA = pynq_part_map[BOARD]
+BOARD = "U250"
+FPGA = alveo_part_map[BOARD]
 TARGET_CLK_PERIOD = 5
 WORKSHEET_NAME = 'FClayer_resources'
 
-def make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T=None, tdt=None):
+def make_single_fclayer_modelwrapper(mem_mode, ram_style, W, pe, simd, wdt, idt, odt, T=None, tdt=None):
     mw = W.shape[0]
     mh = W.shape[1]
     assert mh % pe == 0
@@ -121,6 +119,8 @@ def make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T=None, tdt=Non
         ActVal=actval,
         binaryXnorMode=binary_xnor_mode,
         noActivation=no_act,
+        mem_mode=mem_mode,
+        ram_style=ram_style,
     )
     graph = helper.make_graph(
         nodes=[FCLayer_node], name="fclayer_graph", inputs=[inp], outputs=[outp]
@@ -232,6 +232,8 @@ def upload_data_to_fclayer_dashboard(test_parameters, resources):
 
 # mem_mode: const or decoupled
 @pytest.mark.parametrize("mem_mode", ["const", "decoupled", "external"])
+# ram_style
+@pytest.mark.parametrize("ram_style", ["auto"])
 # activation: None or DataType
 @pytest.mark.parametrize("act", [None, DataType.BIPOLAR, DataType.INT2, DataType.INT4])
 # weight datatype
@@ -247,13 +249,13 @@ def upload_data_to_fclayer_dashboard(test_parameters, resources):
 # HLS matrix height (output features)
 @pytest.mark.parametrize("mh", [16, 64, 128])
 # Upload to google spreadsheet
-@pytest.mark.parametrize("upload", [True])
+@pytest.mark.parametrize("upload", [False])
 # Remove artefacts
-@pytest.mark.parametrize("cleanup", [True])
+@pytest.mark.parametrize("cleanup", [False])
 @pytest.mark.slow
 @pytest.mark.vivado
 @pytest.mark.resource_estimation
-def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh, upload, cleanup):
+def test_fpgadataflow_fclayer_synthesis(mem_mode, ram_style, idt, wdt, act, nf, sf, mw, mh, upload, cleanup):
     if nf == -1:
         nf = mh
     if sf == -1:
@@ -290,7 +292,7 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, idt, wdt, act, nf, sf, mw, mh,
         else:
             tdt = DataType.INT32
 
-    model = make_single_fclayer_modelwrapper(W, pe, simd, wdt, idt, odt, T, tdt)
+    model = make_single_fclayer_modelwrapper(mem_mode, ram_style, W, pe, simd, wdt, idt, odt, T, tdt)
     
     #use this only if worksheet doesn't exist in dashboard 
     #(Avoid using this function or checking everytime if the worksheet exists to avoid reaching the gspread usage limits (number of requests per project/user))
