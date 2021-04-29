@@ -70,7 +70,7 @@ class Thresholding_Batch(HLSCustomOp):
             # number of steps in thresholding function
             "numSteps": ("i", True, 1),
             # string defining memory type
-            "ram_style": ("s", False, "distributed", {"distributed", "block"}),
+            "ram_style": ("s", False, "distributed", {"auto", "distributed", "block"}),
             # FINN DataTypes for inputs, outputs
             "inputDataType": ("s", True, ""),
             "weightDataType": ("s", True, ""),
@@ -174,7 +174,7 @@ class Thresholding_Batch(HLSCustomOp):
         A = idt.bitwidth()
         tmem = self.calc_tmem()
 
-        if style == "block" and tmem > 1:
+        if (style == "block" and tmem > 1) or (style == "auto" and tmem >= 128 and A * P >= 16):
             return int(ceil(A * P / 16)) * int(ceil(tmem / 1024))
         else:
             return 0
@@ -190,7 +190,7 @@ class Thresholding_Batch(HLSCustomOp):
         # cost of comparators
         comparator_cost = A * P
         # cost of LUTRAM
-        if style == "distributed" and tmem > 1:
+        if (style == "distributed" and tmem > 1) or (style == "auto" and (tmem < 128 or A * P < 16)):
             lutram_cost = P * A * int(ceil(tmem / 64))
         else:
             lutram_cost = 0
@@ -803,10 +803,16 @@ class Thresholding_Batch(HLSCustomOp):
                             "core=ROM_2P_BRAM"
                         )
                     )
+                elif ram_style == "auto":
+                    self.code_gen_dict["$PRAGMAS$"].append(
+                        (
+                            "#pragma HLS RESOURCE variable=threshs.m_thresholds "
+                        )
+                    )
                 else:
                     raise Exception(
                         """Invalid value for attribute ram_style! Is currently set to: {}
-                    has to be set to one of ("block", "distributed")""".format(
+                    has to be set to one of ("block", "distributed", "auto")""".format(
                             ram_style
                         )
                     )

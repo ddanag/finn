@@ -52,10 +52,8 @@ from finn.transformation.fpgadataflow.create_stitched_ip import CreateStitchedIP
 from finn.transformation.fpgadataflow.annotate_resources import AnnotateResources
 from finn.transformation.fpgadataflow.create_dataflow_partition import CreateDataflowPartition
 
-#BOARD = "ZCU104"
 BOARD = "U250"
 FPGA = alveo_part_map[BOARD]
-#FPGA = pynq_part_map[BOARD]
 TARGET_CLK_PERIOD = 5
 WORKSHEET_NAME = 'Thresholding_layer_resources'
 
@@ -173,7 +171,7 @@ def upload_data_to_thresholding_dashboard(test_parameters, resources):
 # memory mode
 @pytest.mark.parametrize("mem_mode", ["const", "decoupled"])
 # ram style
-@pytest.mark.parametrize("ram_style", ["distributed", "block"])
+@pytest.mark.parametrize("ram_style", ["auto", "distributed", "block"])
 # Upload to google spreadsheet
 @pytest.mark.parametrize("upload", [True])
 # Remove artefacts
