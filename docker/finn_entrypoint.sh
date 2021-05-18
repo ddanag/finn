@@ -4,18 +4,24 @@ export SHELL=/bin/bash
 export FINN_ROOT=/workspace/finn
 
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 gecho () {
   echo -e "${GREEN}$1${NC}"
 }
 
+recho () {
+  echo -e "${RED}ERROR: $1${NC}"
+}
+
 # checkout the correct dependency repo commits
 # the repos themselves are cloned in the Dockerfile
-FINN_BASE_COMMIT=8908c6a3f6674c4fa790954bd41c23ee5bf053df
-BREVITAS_COMMIT=aff49758ec445d77c75721c7de3091a2a1797ca8
+FINN_BASE_COMMIT=2c08044c5e9011c19911e731a18ac20d775bbf46
+FINN_EXP_COMMIT=e9f97dcdb4db2f889b0f36af079a6a1792b7d4de
+BREVITAS_COMMIT=14abbe1e7ef82485d79415871fcf5766b0a40a00
 CNPY_COMMIT=4e8810b1a8637695171ed346ce68f6984e585ef4
-HLSLIB_COMMIT=2e49322d1bbc4969ca293843bda1f3f9c05456fc
+HLSLIB_COMMIT=4d74baefa79df48b5a0348d63f39a26df075de51
 PYVERILATOR_COMMIT=e2ff74030de3992dcac54bf1b6aad2915946e8cb
 OMX_COMMIT=ace45d2adc63b1557863f7d2dc94b832a9ebd8c3
 
@@ -25,6 +31,11 @@ gecho "finn-base @ $FINN_BASE_COMMIT"
 git -C /workspace/finn-base pull --quiet
 git -C /workspace/finn-base checkout $FINN_BASE_COMMIT --quiet
 pip install --user -e /workspace/finn-base
+# finn-experimental
+gecho "finn-experimental @ $FINN_EXP_COMMIT"
+git -C /workspace/finn-experimental pull --quiet
+git -C /workspace/finn-experimental checkout $FINN_EXP_COMMIT --quiet
+pip install --user -e /workspace/finn-experimental
 # Brevitas
 gecho "brevitas @ $BREVITAS_COMMIT"
 git -C /workspace/brevitas pull --quiet
@@ -74,7 +85,7 @@ if [ ! -d "/workspace/finn/board_files" ]; then
     rm pynq-z2.zip
     cd $OLD_PWD
 fi
-if [ ! -d "/workspace/finn/board_files/ultra96v1" ]; then
+if [ ! -d "/workspace/finn/board_files/ultra96v2" ]; then
     gecho "Downloading Avnet BDF files into board_files"
     OLD_PWD=$(pwd)
     cd /workspace/finn
@@ -86,10 +97,13 @@ fi
 if [ ! -z "$VITIS_PATH" ];then
   # source Vitis env.vars
   export XILINX_VITIS=$VITIS_PATH
+  export XILINX_XRT=/opt/xilinx/xrt
   source $VITIS_PATH/settings64.sh
   if [ ! -z "$XILINX_XRT" ];then
     # source XRT
     source $XILINX_XRT/setup.sh
+  else
+    recho "XRT not found on $XILINX_XRT, did the installation fail?"
   fi
 fi
 exec "$@"
