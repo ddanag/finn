@@ -120,12 +120,13 @@ def make_single_slidingwindow_modelwrapper(k, ifm_ch, ifm_dim, ofm_dim, simd, st
         ["outp"],
         domain="finn.custom_op.fpgadataflow",
         backend="fpgadataflow",
-        ConvKernelDim=k,
+        ConvKernelDim=[k, k],
         IFMChannels=ifm_ch,
-        IFMDim=ifm_dim,
-        OFMDim=ofm_dim,
+        IFMDim=[ifm_dim, ifm_dim],
+        OFMDim=[ofm_dim, ofm_dim],
         SIMD=simd,
-        Stride=stride,
+        Stride=[stride, stride],
+        Dilation=[1,1],
         inputDataType=idt.name,
         outputDataType=odt.name,
         depthwise=dw,
@@ -216,19 +217,21 @@ def upload_data_to_swu_dashboard(test_parameters, resources):
 # input datatype
 @pytest.mark.parametrize("idt", [DataType.BIPOLAR, DataType.INT2, DataType.INT3, DataType.INT4])
 # kernel size
-@pytest.mark.parametrize("k", [2, 3, 5])
+#@pytest.mark.parametrize("k", [2, 3, 5])
+@pytest.mark.parametrize("k", [3])
 # input dimension
-@pytest.mark.parametrize("ifm_dim", [32, 64, 224])
+@pytest.mark.parametrize("ifm_dim", [4, 8, 16, 32, 64, 224])
 # input channels
-@pytest.mark.parametrize("ifm_ch", [3, 32, 128])
+@pytest.mark.parametrize("ifm_ch", [3, 32, 64, 128, 256])
 # Stride
 @pytest.mark.parametrize("stride", [1, 2])
 # synapse folding, -1 is maximum possible
-@pytest.mark.parametrize("sf", [-1, 1, 2, 4])
+@pytest.mark.parametrize("sf", [-1, 1, 2, 4, 8, 16, 32])
 # depthwise
 @pytest.mark.parametrize("dw", [0, 1])
 # ram style
-@pytest.mark.parametrize("ram_style", ["auto", "distributed", "block", "ultra"])
+#@pytest.mark.parametrize("ram_style", ["auto", "distributed", "block", "ultra"])
+@pytest.mark.parametrize("ram_style", ["distributed"])
 # Upload to google spreadsheet
 @pytest.mark.parametrize("upload", [True])
 # Remove artefacts
@@ -241,129 +244,140 @@ def test_fpgadataflow_convinputgenerator_synthesis(idt, k, ifm_dim, ifm_ch, stri
     if sf == -1:
         sf = ifm_ch
     simd = ifm_ch // sf
-    assert ifm_ch % sf == 0
+    #assert ifm_ch % sf == 0
 
-    ofm_dim = int(((ifm_dim - k) / stride) + 1)
+    if ifm_ch % sf == 0:
+        ofm_dim = int(((ifm_dim - k) / stride) + 1)
 
-    x = gen_finn_dt_tensor(idt, (1, ifm_dim, ifm_dim, ifm_ch))
-    model = make_single_slidingwindow_modelwrapper(k, ifm_ch, ifm_dim, ofm_dim, simd, stride, idt, ram_style, dw)
-    
-    #use this only if worksheet doesn't exist in dashboard 
-    #(Avoid using this function or checking everytime if the worksheet exists to avoid reaching the gspread usage limits (number of requests per project/user))
-    #create_worksheet_in_resource_dashboard(WORKSHEET_NAME, 10, headers)
-    #import pdb; pdb.set_trace()
-    
-    #Streamlining
-    model = model.transform(Streamline())
+        x = gen_finn_dt_tensor(idt, (1, ifm_dim, ifm_dim, ifm_ch))
+        model = make_single_slidingwindow_modelwrapper(k, ifm_ch, ifm_dim, ofm_dim, simd, stride, idt, ram_style, dw)
+        
+        #use this only if worksheet doesn't exist in dashboard 
+        #(Avoid using this function or checking everytime if the worksheet exists to avoid reaching the gspread usage limits (number of requests per project/user))
+        #create_worksheet_in_resource_dashboard(WORKSHEET_NAME, 10, headers)
+        #import pdb; pdb.set_trace()
+        
+        #Streamlining
+        model = model.transform(Streamline())
 
-    #Convert to HLS layers
-    model = model.transform(to_hls.InferConvInpGen())
+        #Convert to HLS layers
+        model = model.transform(to_hls.InferConvInpGen())
 
-    #Dataflow Partitioning
-    model = model.transform(CreateDataflowPartition())
+        #Dataflow Partitioning
+        model = model.transform(CreateDataflowPartition())
 
-    #get the StreamingDataflowPartition
-    sdp_node = model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
-    sdp_node = getCustomOp(sdp_node)
-    dataflow_model_filename = sdp_node.get_nodeattr("model")
+        #get the StreamingDataflowPartition
+        sdp_node = model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
+        sdp_node = getCustomOp(sdp_node)
+        dataflow_model_filename = sdp_node.get_nodeattr("model")
 
-    #save the dataflow partition with a different name for easier access
-    dataflow_model = ModelWrapper(dataflow_model_filename)
+        #save the dataflow partition with a different name for easier access
+        dataflow_model = ModelWrapper(dataflow_model_filename)
 
-    dataflow_model = dataflow_model.transform(GiveUniqueNodeNames())
+        dataflow_model = dataflow_model.transform(GiveUniqueNodeNames())
 
-    dataflow_model.save("sliding_window_unit_before_synth.onnx")
+        dataflow_model.save("sliding_window_unit_before_synth.onnx")
 
-    test_parameters = {'FPGA': FPGA, 'idt': idt, 'k': k, 'ifm_dim': ifm_dim, 'ifm_ch': ifm_ch, 'sf': sf, 'simd': simd, 'stride': stride, 'dw': dw, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD}
-    finn_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd="/workspace/finn")
-    finn_commit = finn_commit.decode("utf-8").strip()
+        test_parameters = {'FPGA': FPGA, 'idt': idt, 'k': k, 'ifm_dim': ifm_dim, 'ifm_ch': ifm_ch, 'sf': sf, 'simd': simd, 'stride': stride, 'dw': dw, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD}
+        finn_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd="/workspace/finn")
+        finn_commit = finn_commit.decode("utf-8").strip()
 
-    #PrepareIP, #HLSSynthIP
-    dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
-    dataflow_model = dataflow_model.transform(HLSSynthIP())
+        hls_synth_done_flag = 0
 
-    #skip out of context synthesis if config_dict already exists in finn-resource-dashboard
-    config_dict = {'FPGA': FPGA, 'idt': idt, 'k': k, 'ifm_dim': ifm_dim, 'ifm_ch': ifm_ch, 'sf': sf, 'simd': simd, 'stride': stride, 'dw': dw, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'synthesis'}
-    
-    #TODO have to get this from vivado (tcl script) + add to config_dicts
-    vivado_version = '2020.1'
-    vivado_build_no = '2902540'
-
-    if upload:
-        matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
-    else:
-        matched = False
-
-    if not matched:
-        #CreateStitchedIP, OutOfContextSynth
-        dataflow_model = dataflow_model.transform(CreateStitchedIP(FPGA, TARGET_CLK_PERIOD))
-        dataflow_model = dataflow_model.transform(SynthOutOfContext(part = FPGA, clk_period_ns = TARGET_CLK_PERIOD))
-
-        synthesis_resources = ["synthesis"]
-        ret = dataflow_model.get_metadata_prop("res_total_ooc_synth")
-        synthesis_resources.append(ret)
-        synthesis_resources.append({'finn_commit': finn_commit})
-
-        ret = eval(ret)
-        vivado_version = ret['vivado_version']
-        vivado_build_no = ret['vivado_build_no']
+        #skip out of context synthesis if config_dict already exists in finn-resource-dashboard
+        config_dict = {'FPGA': FPGA, 'idt': idt, 'k': k, 'ifm_dim': ifm_dim, 'ifm_ch': ifm_ch, 'sf': sf, 'simd': simd, 'stride': stride, 'dw': dw, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'synthesis'}
+        
+        #TODO have to get this from vivado (tcl script) + add to config_dicts
+        vivado_version = '2020.1'
+        vivado_build_no = '2902540'
 
         if upload:
-            upload_data_to_swu_dashboard(test_parameters, synthesis_resources)
+            matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
+        else:
+            matched = False
 
-        dataflow_model.save("swu_model_after_oocsynth.onnx")
-    
-    #skip getting hls estimates if config_dict already exists in finn-resource-dashboard
-    config_dict = {'FPGA': FPGA, 'idt': idt, 'k': k, 'ifm_dim': ifm_dim, 'ifm_ch': ifm_ch, 'sf': sf, 'simd': simd, 'stride': stride, 'dw': dw, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'hls'}
+        if not matched:
+            if hls_synth_done_flag == 0:
+                #PrepareIP, #HLSSynthIP
+                dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
+                dataflow_model = dataflow_model.transform(HLSSynthIP())
+                hls_synth_done_flag = 1
 
-    if upload:
-        matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
-    else:
-        matched = False
+            #CreateStitchedIP, OutOfContextSynth
+            dataflow_model = dataflow_model.transform(CreateStitchedIP(FPGA, TARGET_CLK_PERIOD))
+            dataflow_model = dataflow_model.transform(SynthOutOfContext(part = FPGA, clk_period_ns = TARGET_CLK_PERIOD))
 
-    if not matched:       
-        #get resources estimated by hls
-        dataflow_model_hls = dataflow_model.transform(AnnotateResources(mode="hls"))
-        dataflow_model_hls.save("swu_model_hls.onnx")
+            synthesis_resources = ["synthesis"]
+            ret = dataflow_model.get_metadata_prop("res_total_ooc_synth")
+            synthesis_resources.append(ret)
+            synthesis_resources.append({'finn_commit': finn_commit})
 
-        hls_resources = ["hls"]
-        custom_ops_hls = getCustomOp(dataflow_model_hls.graph.node[0])
-        hls_resources.append(custom_ops_hls.get_nodeattr("res_hls"))
-        hls_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
+            ret = eval(ret)
+            vivado_version = ret['vivado_version']
+            vivado_build_no = ret['vivado_build_no']
+
+            if upload:
+                upload_data_to_swu_dashboard(test_parameters, synthesis_resources)
+
+            dataflow_model.save("swu_model_after_oocsynth.onnx")
         
-        #get EstimatedClockPeriod
-        timing = get_timing(dataflow_model_hls, "hls")
-        hls_resources.append(timing[dataflow_model_hls.graph.node[0].name])
-        
+        #skip getting hls estimates if config_dict already exists in finn-resource-dashboard
+        config_dict = {'FPGA': FPGA, 'idt': idt, 'k': k, 'ifm_dim': ifm_dim, 'ifm_ch': ifm_ch, 'sf': sf, 'simd': simd, 'stride': stride, 'dw': dw, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'hls'}
+
         if upload:
-            upload_data_to_swu_dashboard(test_parameters, hls_resources)
-        
+            matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
+        else:
+            matched = False
+
+        if not matched:   
+            if hls_synth_done_flag == 0:
+                #PrepareIP, #HLSSynthIP
+                dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
+                dataflow_model = dataflow_model.transform(HLSSynthIP())
+                hls_synth_done_flag = 1    
+                
+            #get resources estimated by hls
+            dataflow_model_hls = dataflow_model.transform(AnnotateResources(mode="hls"))
+            dataflow_model_hls.save("swu_model_hls.onnx")
+
+            hls_resources = ["hls"]
+            custom_ops_hls = getCustomOp(dataflow_model_hls.graph.node[0])
+            hls_resources.append(custom_ops_hls.get_nodeattr("res_hls"))
+            hls_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
+            
+            #get EstimatedClockPeriod
+            timing = get_timing(dataflow_model_hls, "hls")
+            hls_resources.append(timing[dataflow_model_hls.graph.node[0].name])
+            
+            if upload:
+                upload_data_to_swu_dashboard(test_parameters, hls_resources)
+            
+            if cleanup:
+                dataflow_model_hls.transform(CleanUp())
+
+        #skip getting finn estimates if config_dict already exists in finn-resource-dashboard
+        config_dict = {'FPGA': FPGA, 'idt': idt, 'k': k, 'ifm_dim': ifm_dim, 'ifm_ch': ifm_ch, 'sf': sf, 'simd': simd, 'stride': stride, 'dw': dw, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'estimate'}
+
+        if upload:
+            matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
+        else:
+            matched = False
+            
+        if not matched:  
+            #get estimated resources
+            dataflow_model_estimate = dataflow_model.transform(AnnotateResources(mode="estimate"))
+            dataflow_model_estimate.save("swu_model_estimate.onnx")
+
+            estimate_resources = ["estimate"]
+            custom_ops_estimate = getCustomOp(dataflow_model_estimate.graph.node[0])
+            estimate_resources.append(custom_ops_estimate.get_nodeattr("res_estimate"))
+            estimate_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
+
+            if upload:
+                upload_data_to_swu_dashboard(test_parameters, estimate_resources)
+            if cleanup:
+                dataflow_model_estimate.transform(CleanUp())
+
         if cleanup:
-            dataflow_model_hls.transform(CleanUp())
-
-    #skip getting finn estimates if config_dict already exists in finn-resource-dashboard
-    config_dict = {'FPGA': FPGA, 'idt': idt, 'k': k, 'ifm_dim': ifm_dim, 'ifm_ch': ifm_ch, 'sf': sf, 'simd': simd, 'stride': stride, 'dw': dw, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'estimate'}
-
-    if upload:
-        matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
-    else:
-        matched = False
-        
-    if not matched:  
-        #get estimated resources
-        dataflow_model_estimate = dataflow_model.transform(AnnotateResources(mode="estimate"))
-        dataflow_model_estimate.save("swu_model_estimate.onnx")
-
-        estimate_resources = ["estimate"]
-        custom_ops_estimate = getCustomOp(dataflow_model_estimate.graph.node[0])
-        estimate_resources.append(custom_ops_estimate.get_nodeattr("res_estimate"))
-        estimate_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
-
-        if upload:
-            upload_data_to_swu_dashboard(test_parameters, estimate_resources)
-        if cleanup:
-            dataflow_model_estimate.transform(CleanUp())
-
-    if cleanup:
-        model.transform(CleanUp())
-        dataflow_model.transform(CleanUp())
+            model.transform(CleanUp())
+            dataflow_model.transform(CleanUp())

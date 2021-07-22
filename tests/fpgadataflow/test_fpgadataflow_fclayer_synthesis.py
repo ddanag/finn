@@ -66,7 +66,7 @@ from finn.util.basic import pynq_part_map, alveo_part_map
 BOARD = "U250"
 FPGA = alveo_part_map[BOARD]
 TARGET_CLK_PERIOD = 5
-WORKSHEET_NAME = 'FClayer_resources'
+WORKSHEET_NAME = 'FCLayer_resources'
 
 def make_single_fclayer_modelwrapper(mem_mode, ram_style, W, pe, simd, wdt, idt, odt, T=None, tdt=None):
     mw = W.shape[0]
@@ -231,23 +231,33 @@ def upload_data_to_fclayer_dashboard(test_parameters, resources):
     upload_to_resource_dashboard(WORKSHEET_NAME, data_dict, overwrite, row_index)
 
 # mem_mode: const or decoupled
+#@pytest.mark.parametrize("mem_mode", ["decoupled"])
 @pytest.mark.parametrize("mem_mode", ["const", "decoupled", "external"])
 # ram_style
 @pytest.mark.parametrize("ram_style", ["auto"])
 # activation: None or DataType
+#@pytest.mark.parametrize("act", [None])
 @pytest.mark.parametrize("act", [None, DataType.BIPOLAR, DataType.INT2, DataType.INT4])
 # weight datatype
+#@pytest.mark.parametrize("wdt", [DataType.INT4])
 @pytest.mark.parametrize("wdt", [DataType.BIPOLAR, DataType.INT2, DataType.INT4])
 # input datatype
+#@pytest.mark.parametrize("idt", [DataType.INT4])
 @pytest.mark.parametrize("idt", [DataType.BIPOLAR, DataType.INT2, DataType.INT4])
 # neuron folding, -1 is maximum possible
-@pytest.mark.parametrize("nf", [-1, 2, 1])
+@pytest.mark.parametrize("nf", [-1, 1, 2, 4])
+#@pytest.mark.parametrize("nf", [8, 16])
 # synapse folding, -1 is maximum possible
-@pytest.mark.parametrize("sf", [-1, 2, 1])
+@pytest.mark.parametrize("sf", [-1, 1, 2, 4])
+#@pytest.mark.parametrize("sf", [8, 16])
 # HLS matrix width (input features)
-@pytest.mark.parametrize("mw", [16, 64, 128])
+#@pytest.mark.parametrize("mw", [16, 64, 128, 512, 2048])
+@pytest.mark.parametrize("mw", [16, 64, 128, 512, 1024, 2048])
+#@pytest.mark.parametrize("mw", [512, 1024, 2048])
 # HLS matrix height (output features)
-@pytest.mark.parametrize("mh", [16, 64, 128])
+#@pytest.mark.parametrize("mh", [512, 1024])
+@pytest.mark.parametrize("mh", [16, 64, 128, 256, 512, 1024])
+#@pytest.mark.parametrize("mh", [16, 64, 128, 256, 512])
 # Upload to google spreadsheet
 @pytest.mark.parametrize("upload", [False])
 # Remove artefacts
@@ -324,9 +334,7 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, ram_style, idt, wdt, act, nf, 
     finn_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd="/workspace/finn")
     finn_commit = finn_commit.decode("utf-8").strip()
 
-    #PrepareIP, #HLSSynthIP
-    dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
-    dataflow_model = dataflow_model.transform(HLSSynthIP())
+    hls_synth_done_flag = 0
 
     #skip out of context synthesis if config_dict already exists in finn-resource-dashboard
     config_dict = {'FPGA': FPGA, 'mh': mh, 'mw': mw, 'nf': nf, 'sf': sf, 'pe': pe, 'simd': simd, 'act': act, 'wdt': wdt, 'idt': idt, 'mem_mode': mem_mode, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'synthesis'}
@@ -341,6 +349,12 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, ram_style, idt, wdt, act, nf, 
         matched = False
         
     if not matched:
+        if hls_synth_done_flag == 0:
+            #PrepareIP, #HLSSynthIP
+            dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
+            dataflow_model = dataflow_model.transform(HLSSynthIP())
+            hls_synth_done_flag = 1
+
         #CreateStitchedIP, OutOfContextSynth
         dataflow_model = dataflow_model.transform(CreateStitchedIP(FPGA, TARGET_CLK_PERIOD))
         dataflow_model = dataflow_model.transform(SynthOutOfContext(part = FPGA, clk_period_ns = TARGET_CLK_PERIOD))
@@ -368,6 +382,12 @@ def test_fpgadataflow_fclayer_synthesis(mem_mode, ram_style, idt, wdt, act, nf, 
         matched = False
 
     if not matched:   
+        if hls_synth_done_flag == 0:
+            #PrepareIP, #HLSSynthIP
+            dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
+            dataflow_model = dataflow_model.transform(HLSSynthIP())
+            hls_synth_done_flag = 1
+
         #get resources estimated by hls
         dataflow_model_hls = dataflow_model.transform(AnnotateResources(mode="hls"))
         dataflow_model_hls.save("fclayer_model_hls.onnx")

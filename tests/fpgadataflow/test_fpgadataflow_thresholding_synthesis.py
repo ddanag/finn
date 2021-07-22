@@ -165,13 +165,15 @@ def upload_data_to_thresholding_dashboard(test_parameters, resources):
 # input datatype
 @pytest.mark.parametrize("idt", [DataType.UINT12, DataType.UINT16, DataType.UINT20, DataType.UINT24, DataType.UINT28, DataType.UINT32])
 # folding, -1 is maximum possible
-@pytest.mark.parametrize("nf", [-1, 1, 2, 4, 8])
+@pytest.mark.parametrize("nf", [-1, 1, 2, 4, 8, 16])
 # number of input features
-@pytest.mark.parametrize("ich", [16, 32, 48, 64, 80, 96, 128, 160, 192, 256, 320])
+@pytest.mark.parametrize("ich", [3, 16, 32, 48, 64, 80, 96, 128, 160, 192, 256, 320, 512, 784])
 # memory mode
-@pytest.mark.parametrize("mem_mode", ["const", "decoupled"])
+@pytest.mark.parametrize("mem_mode", ["const"])
+#@pytest.mark.parametrize("mem_mode", ["const", "decoupled"])
 # ram style
-@pytest.mark.parametrize("ram_style", ["auto", "distributed", "block"])
+@pytest.mark.parametrize("ram_style", ["distributed"])
+#@pytest.mark.parametrize("ram_style", ["auto", "distributed", "block"])
 # Upload to google spreadsheet
 @pytest.mark.parametrize("upload", [True])
 # Remove artefacts
@@ -182,174 +184,186 @@ def upload_data_to_thresholding_dashboard(test_parameters, resources):
 def test_fpgadataflow_thresholding_synthesis(idt, act, nf, ich, mem_mode, ram_style, upload, cleanup):
     if nf == -1:
         nf = ich
-    pe = ich // nf
-    assert ich % pe == 0
+    #assert ich % pe == 0
 
-    odt = act
+    if ich % nf == 0:
 
-    if odt == DataType.BIPOLAR:
-        actval = 0
-    else:
-        actval = odt.min()
-    
-    #generate thresholds
-    n_steps = act.get_num_possible_values() - 1
-    if act == DataType.BIPOLAR:
-        T = np.random.randint((1<<(idt.bitwidth()-1)), idt.max() + 1, (ich, n_steps)).astype(np.float32)
-        # make the vivado_hls threshold bug appear (incorrect rtlsim result when first
-        # threshold of first channel is zero, while using BIPOLAR output)
-        #if act == DataType.BIPOLAR:
-        #    T[0][0] = 0
-    else:
-        T = np.zeros((ich, n_steps))
-        j = 0
-        reverse = 0
-        for i in range(ich):   
-            T[i][j] = np.random.randint((1<<(idt.bitwidth()-1)), idt.max())
-            k_set = j
-            if reverse:
-                j = j - 1
-            else:
-                j = j + 1
-            if j == n_steps-1:
-                reverse = 1
-            elif j == 0:
-                reverse = 0 
-            for k in range(n_steps):
-                if k < k_set:
-                    T[i][k] = np.random.randint(idt.min(), (T[i][k_set]-1))
-                elif k > k_set:
-                    T[i][k] = np.random.randint(T[i][k_set], idt.max())
+        pe = ich // nf
+        odt = act
 
-        T = T.astype(np.float32)
-    #provide non-decreasing thresholds
-    T = np.sort(T, axis=1)
-
-    model = make_single_thresholding_modelwrapper(T, pe, idt, odt, actval, mem_mode, ram_style)
-    
-    #use this only if worksheet doesn't exist in dashboard 
-    #(Avoid using this function or checking everytime if the worksheet exists to avoid reaching the gspread usage limits (number of requests per project/user))
-    #create_worksheet_in_resource_dashboard(WORKSHEET_NAME, 10, headers)
-    #import pdb; pdb.set_trace()
-
-    #get_weightstream_width and check if it's under the HLS limitation (32768)
-    node = model.get_nodes_by_op_type("Thresholding_Batch")[0]
-    node = getCustomOp(node)
-    weightstream_width = node.get_weightstream_width()
-    
-    if weightstream_width <= 32768:
-        #Streamlining
-        model = model.transform(Streamline())
-
-        #Convert to HLS layers
-        model = model.transform(to_hls.InferThresholdingLayer(mem_mode))
-
-        #Dataflow Partitioning
-        model = model.transform(CreateDataflowPartition())
-
-        #get the StreamingDataflowPartition
-        sdp_node = model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
-        sdp_node = getCustomOp(sdp_node)
-        dataflow_model_filename = sdp_node.get_nodeattr("model")
-
-        #save the dataflow partition with a different name for easier access
-        dataflow_model = ModelWrapper(dataflow_model_filename)
-
-        dataflow_model = dataflow_model.transform(GiveUniqueNodeNames())
-
-        dataflow_model.save("thresholding_layer_before_synth.onnx")
-
-        test_parameters = {'FPGA': FPGA, 'ich': ich, 'nf': nf, 'pe': pe, 'idt': idt, 'act': act, 'mem_mode': mem_mode, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD}
-        finn_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd="/workspace/finn")
-        finn_commit = finn_commit.decode("utf-8").strip()
-
-        #PrepareIP, #HLSSynthIP
-        dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
-        dataflow_model = dataflow_model.transform(HLSSynthIP())
-
-        #skip out of context synthesis if config_dict already exists in finn-resource-dashboard
-        config_dict = {'FPGA': FPGA, 'ich': ich, 'nf': nf, 'pe': pe, 'idt': idt, 'act': act, 'mem_mode': mem_mode, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'synthesis'}
-
-        #TODO have to get this from vivado (tcl script) + add to config_dicts
-        vivado_version = '2020.1'
-        vivado_build_no = '2902540'
-
-        if upload:
-            matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
+        if odt == DataType.BIPOLAR:
+            actval = 0
         else:
-            matched = False
-            
-        if not matched:
-            #CreateStitchedIP, OutOfContextSynth
-            dataflow_model = dataflow_model.transform(CreateStitchedIP(FPGA, TARGET_CLK_PERIOD))
-            dataflow_model = dataflow_model.transform(SynthOutOfContext(part = FPGA, clk_period_ns = TARGET_CLK_PERIOD))
-
-            synthesis_resources = ["synthesis"]
-            ret = dataflow_model.get_metadata_prop("res_total_ooc_synth")
-            synthesis_resources.append(ret)
-            synthesis_resources.append({'finn_commit': finn_commit})
-
-            ret = eval(ret)
-            vivado_version = ret['vivado_version']
-            vivado_build_no = ret['vivado_build_no']
-
-            if upload:
-                upload_data_to_thresholding_dashboard(test_parameters, synthesis_resources)
-
-            dataflow_model.save("thresholding_model_after_oocsynth.onnx")
+            actval = odt.min()
         
-        #skip getting hls estimates if config_dict already exists in finn-resource-dashboard
-        config_dict = {'FPGA': FPGA, 'ich': ich, 'nf': nf, 'pe': pe, 'idt': idt, 'act': act, 'mem_mode': mem_mode, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'hls'}
-
-        if upload:
-            matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
+        #generate thresholds
+        n_steps = act.get_num_possible_values() - 1
+        if act == DataType.BIPOLAR:
+            T = np.random.randint((1<<(idt.bitwidth()-1)), idt.max() + 1, (ich, n_steps)).astype(np.float32)
+            # make the vivado_hls threshold bug appear (incorrect rtlsim result when first
+            # threshold of first channel is zero, while using BIPOLAR output)
+            #if act == DataType.BIPOLAR:
+            #    T[0][0] = 0
         else:
-            matched = False
-            
-        if not matched:       
-            #get resources estimated by hls
-            dataflow_model_hls = dataflow_model.transform(AnnotateResources(mode="hls"))
-            dataflow_model_hls.save("thresholding_model_hls.onnx")
+            T = np.zeros((ich, n_steps))
+            j = 0
+            reverse = 0
+            for i in range(ich):   
+                T[i][j] = np.random.randint((1<<(idt.bitwidth()-1)), idt.max())
+                k_set = j
+                if reverse:
+                    j = j - 1
+                else:
+                    j = j + 1
+                if j == n_steps-1:
+                    reverse = 1
+                elif j == 0:
+                    reverse = 0 
+                for k in range(n_steps):
+                    if k < k_set:
+                        T[i][k] = np.random.randint(idt.min(), (T[i][k_set]-1))
+                    elif k > k_set:
+                        T[i][k] = np.random.randint(T[i][k_set], idt.max())
 
-            hls_resources = ["hls"]
-            custom_ops_hls = getCustomOp(dataflow_model_hls.graph.node[0])
-            hls_resources.append(custom_ops_hls.get_nodeattr("res_hls"))
-            hls_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
-            
-            #get EstimatedClockPeriod
-            timing = get_timing(dataflow_model_hls, "hls")
-            hls_resources.append(timing[dataflow_model_hls.graph.node[0].name])
-            
+            T = T.astype(np.float32)
+        #provide non-decreasing thresholds
+        T = np.sort(T, axis=1)
+
+        model = make_single_thresholding_modelwrapper(T, pe, idt, odt, actval, mem_mode, ram_style)
+        
+        #use this only if worksheet doesn't exist in dashboard 
+        #(Avoid using this function or checking everytime if the worksheet exists to avoid reaching the gspread usage limits (number of requests per project/user))
+        #create_worksheet_in_resource_dashboard(WORKSHEET_NAME, 10, headers)
+        #import pdb; pdb.set_trace()
+
+        #get_weightstream_width and check if it's under the HLS limitation (32768)
+        node = model.get_nodes_by_op_type("Thresholding_Batch")[0]
+        node = getCustomOp(node)
+        weightstream_width = node.get_weightstream_width()
+        
+        if weightstream_width <= 32768:
+            #Streamlining
+            model = model.transform(Streamline())
+
+            #Convert to HLS layers
+            model = model.transform(to_hls.InferThresholdingLayer(mem_mode))
+
+            #Dataflow Partitioning
+            model = model.transform(CreateDataflowPartition())
+
+            #get the StreamingDataflowPartition
+            sdp_node = model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
+            sdp_node = getCustomOp(sdp_node)
+            dataflow_model_filename = sdp_node.get_nodeattr("model")
+
+            #save the dataflow partition with a different name for easier access
+            dataflow_model = ModelWrapper(dataflow_model_filename)
+
+            dataflow_model = dataflow_model.transform(GiveUniqueNodeNames())
+
+            dataflow_model.save("thresholding_layer_before_synth.onnx")
+
+            test_parameters = {'FPGA': FPGA, 'ich': ich, 'nf': nf, 'pe': pe, 'idt': idt, 'act': act, 'mem_mode': mem_mode, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD}
+            finn_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd="/workspace/finn")
+            finn_commit = finn_commit.decode("utf-8").strip()
+
+            hls_synth_done_flag = 0
+
+            #skip out of context synthesis if config_dict already exists in finn-resource-dashboard
+            config_dict = {'FPGA': FPGA, 'ich': ich, 'nf': nf, 'pe': pe, 'idt': idt, 'act': act, 'mem_mode': mem_mode, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'synthesis'}
+
+            #TODO have to get this from vivado (tcl script) + add to config_dicts
+            vivado_version = '2020.1'
+            vivado_build_no = '2902540'
+
             if upload:
-                upload_data_to_thresholding_dashboard(test_parameters, hls_resources)
+                matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
+            else:
+                matched = False
+                
+            if not matched:
+                if hls_synth_done_flag == 0:
+                    #PrepareIP, #HLSSynthIP
+                    dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
+                    dataflow_model = dataflow_model.transform(HLSSynthIP())
+                    hls_synth_done_flag = 1
+
+                #CreateStitchedIP, OutOfContextSynth
+                dataflow_model = dataflow_model.transform(CreateStitchedIP(FPGA, TARGET_CLK_PERIOD))
+                dataflow_model = dataflow_model.transform(SynthOutOfContext(part = FPGA, clk_period_ns = TARGET_CLK_PERIOD))
+
+                synthesis_resources = ["synthesis"]
+                ret = dataflow_model.get_metadata_prop("res_total_ooc_synth")
+                synthesis_resources.append(ret)
+                synthesis_resources.append({'finn_commit': finn_commit})
+
+                ret = eval(ret)
+                vivado_version = ret['vivado_version']
+                vivado_build_no = ret['vivado_build_no']
+
+                if upload:
+                    upload_data_to_thresholding_dashboard(test_parameters, synthesis_resources)
+
+                dataflow_model.save("thresholding_model_after_oocsynth.onnx")
             
-            if cleanup:
-                dataflow_model_hls.transform(CleanUp())
-
-        #skip getting finn estimates if config_dict already exists in finn-resource-dashboard
-        config_dict = {'FPGA': FPGA, 'ich': ich, 'nf': nf, 'pe': pe, 'idt': idt, 'act': act, 'mem_mode': mem_mode, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'estimate'}
-
-        if upload:
-            matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
-        else:
-            matched = False
-            
-        if not matched:  
-            #get estimated resources
-            dataflow_model_estimate = dataflow_model.transform(AnnotateResources(mode="estimate"))
-            dataflow_model_estimate.save("thresholding_model_estimate.onnx")
-
-            estimate_resources = ["estimate"]
-            custom_ops_estimate = getCustomOp(dataflow_model_estimate.graph.node[0])
-            estimate_resources.append(custom_ops_estimate.get_nodeattr("res_estimate"))
-            estimate_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
+            #skip getting hls estimates if config_dict already exists in finn-resource-dashboard
+            config_dict = {'FPGA': FPGA, 'ich': ich, 'nf': nf, 'pe': pe, 'idt': idt, 'act': act, 'mem_mode': mem_mode, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'hls'}
 
             if upload:
-                upload_data_to_thresholding_dashboard(test_parameters, estimate_resources)
-            if cleanup:
-                dataflow_model_estimate.transform(CleanUp())
+                matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
+            else:
+                matched = False
+                
+            if not matched: 
+                if hls_synth_done_flag == 0:
+                    #PrepareIP, #HLSSynthIP
+                    dataflow_model = dataflow_model.transform(PrepareIP(FPGA, TARGET_CLK_PERIOD))
+                    dataflow_model = dataflow_model.transform(HLSSynthIP())
+                    hls_synth_done_flag = 1
 
-        if cleanup:
-            model.transform(CleanUp())
-            dataflow_model.transform(CleanUp())
-            
+                #get resources estimated by hls
+                dataflow_model_hls = dataflow_model.transform(AnnotateResources(mode="hls"))
+                dataflow_model_hls.save("thresholding_model_hls.onnx")
+
+                hls_resources = ["hls"]
+                custom_ops_hls = getCustomOp(dataflow_model_hls.graph.node[0])
+                hls_resources.append(custom_ops_hls.get_nodeattr("res_hls"))
+                hls_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
+                
+                #get EstimatedClockPeriod
+                timing = get_timing(dataflow_model_hls, "hls")
+                hls_resources.append(timing[dataflow_model_hls.graph.node[0].name])
+                
+                if upload:
+                    upload_data_to_thresholding_dashboard(test_parameters, hls_resources)
+                
+                if cleanup:
+                    dataflow_model_hls.transform(CleanUp())
+
+            #skip getting finn estimates if config_dict already exists in finn-resource-dashboard
+            config_dict = {'FPGA': FPGA, 'ich': ich, 'nf': nf, 'pe': pe, 'idt': idt, 'act': act, 'mem_mode': mem_mode, 'ram_style': ram_style, 'TargetClockPeriod': TARGET_CLK_PERIOD, 'Resources from:': 'estimate'}
+
+            if upload:
+                matched, row_index = search_in_resource_dashboard(WORKSHEET_NAME, config_dict)
+            else:
+                matched = False
+                
+            if not matched:  
+                #get estimated resources
+                dataflow_model_estimate = dataflow_model.transform(AnnotateResources(mode="estimate"))
+                dataflow_model_estimate.save("thresholding_model_estimate.onnx")
+
+                estimate_resources = ["estimate"]
+                custom_ops_estimate = getCustomOp(dataflow_model_estimate.graph.node[0])
+                estimate_resources.append(custom_ops_estimate.get_nodeattr("res_estimate"))
+                estimate_resources.append({'finn_commit': finn_commit, 'vivado_version': vivado_version, 'vivado_build_no': vivado_build_no})
+
+                if upload:
+                    upload_data_to_thresholding_dashboard(test_parameters, estimate_resources)
+                if cleanup:
+                    dataflow_model_estimate.transform(CleanUp())
+
+            if cleanup:
+                model.transform(CleanUp())
+                dataflow_model.transform(CleanUp())
+                
