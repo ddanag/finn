@@ -76,6 +76,7 @@ from finn.analysis.fpgadataflow.res_estimation import (
     res_estimation,
     res_estimation_complete,
 )
+from finn.analysis.fpgadataflow.res_estimation_svr import res_estimation_svr
 from finn.analysis.fpgadataflow.op_and_param_counts import (
     aggregate_dict_keys,
     op_and_param_counts,
@@ -273,6 +274,14 @@ def step_generate_estimate_reports(model: ModelWrapper, cfg: DataflowBuildConfig
         )
         with open(report_dir + "/estimate_layer_resources.json", "w") as f:
             json.dump(estimate_layer_resources, f, indent=2)
+
+        estimate_layer_resources_svr = model.analysis(res_estimation_svr)
+        #estimate_layer_resources_svr["total"] = aggregate_dict_keys(
+        #    estimate_layer_resources_svr
+        #)
+        with open(report_dir + "/estimate_layer_resources_svr.json", "w") as f:
+            json.dump(estimate_layer_resources_svr, f, indent=2)
+
         estimate_layer_resources_complete = model.analysis(res_estimation_complete)
         with open(report_dir + "/estimate_layer_config_alternatives.json", "w") as f:
             json.dump(estimate_layer_resources_complete, f, indent=2)

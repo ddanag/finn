@@ -244,8 +244,8 @@ print('Resource classes:', res_classes)
 print('Timing info:', timing_info)
 
 #for testing
-#parameters = ['pe', 'simd']
-#res_classes = ['LUT']
+parameters = ['pe', 'simd']
+res_classes = ['LUT']
 
 for parameter in parameters:
     for res_class in res_classes:

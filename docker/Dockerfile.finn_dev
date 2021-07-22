@@ -74,9 +74,10 @@ RUN pip install pytest-parallel==0.1.0
 RUN pip install netron
 RUN pip install pandas
 RUN pip install pytest-split-tests
-RUN pip install sklearn
+RUN pip install scikit-learn==0.24.2
 RUN pip install -e git+https://github.com/fbcotter/dataset_loading.git@0.0.4#egg=dataset_loading
-
+#
+RUN pip install mlxtend
 
 # switch user
 RUN groupadd -g $GID $GNAME
@@ -123,6 +124,7 @@ RUN chmod 755 /usr/local/bin/quicktest.sh
 # install vitis deps if required
 ARG INSTALL_XRT_DEPS
 ARG XRT_DEB_VERSION
+
 RUN if [ "$INSTALL_XRT_DEPS" = "1" ] ; then \
     echo "Installing XRT: $XRT_DEB_VERSION"; \
     wget https://www.xilinx.com/bin/public/openDownload?filename=$XRT_DEB_VERSION.deb -O /tmp/$XRT_DEB_VERSION.deb; \

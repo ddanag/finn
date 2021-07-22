@@ -100,6 +100,9 @@ MANIFEST
 # graphs folder from resource modelling
 /resource_modelling/graphs/*
 
+# models folder from resource modelling
+/resource_modelling/models/*
+
 # results folder from resource modelling
 /resource_modelling/results/*
 
