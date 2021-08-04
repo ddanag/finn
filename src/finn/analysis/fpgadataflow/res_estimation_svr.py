@@ -91,7 +91,7 @@ def fclayer_res_estimation(inst):
             mem_mode_class = label_classes.index(mem_mode)
         except:
             print("No label classes")
-        #add the names of the features in jsons 
+        #TODO add the features list in jsons 
         """       
         if res == 'LUT':
             if wdt == 1 and idt == 1:
@@ -103,8 +103,6 @@ def fclayer_res_estimation(inst):
         input_set = [[mh, mw, pe, simd, wdt, idt, act, mem_mode_class]]
             
         feature_scaler = StandardScaler().fit(X_train_before)
-        #Reshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.
-        #input_set = feature_scaler.transform(input_set.reshape(1, -1))
         input_set = feature_scaler.transform(input_set)
         
         if dict_read['target_scaler'] == 0:
@@ -195,7 +193,7 @@ def thresholding_res_estimation(inst):
             elif mem_mode == "decoupled":
                 mem_mode_class = 1
             
-            #TODO specify in the json the features
+            #TODO add the features list in jsons 
             if res == "Total_BRAM_18K" or res == "LUTRAM" or res == "LUT":
                 input_set = [[ich, pe, idt, act]]
             else:
@@ -203,8 +201,6 @@ def thresholding_res_estimation(inst):
                 input_set = [[ich, pe, idt, act, mem_mode_class, ram_style_class]]
 
             feature_scaler = StandardScaler().fit(X_train_before)
-            #Reshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.
-            #input_set = feature_scaler.transform(input_set.reshape(1, -1))
             input_set = feature_scaler.transform(input_set)
             
             if dict_read['target_scaler'] == 0:
@@ -271,6 +267,7 @@ def convolutioninputgenerator_res_estimation(inst):
             estimator = estimator.set_params(**estimator_params)
             estimator.fit(X_train, Y_train)
             
+            #TODO add the features list in jsons 
             if res == "Total_BRAM_18K" or res == "LUTRAM" or res == "URAM":
                 input_set = [[ifm_dim, ifm_ch, simd, k, stride, idt, dw]]
             elif res == "LUT":
@@ -281,8 +278,6 @@ def convolutioninputgenerator_res_estimation(inst):
                 input_set = [[ifm_dim, ifm_ch, simd, k, stride, idt, dw, ram_style_class]]
                 
             feature_scaler = StandardScaler().fit(X_train_before)
-            #Reshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.
-            #input_set = feature_scaler.transform(input_set.reshape(1, -1))
             input_set = feature_scaler.transform(input_set)
             
             if dict_read['target_scaler'] == 0:
