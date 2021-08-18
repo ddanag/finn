@@ -14,6 +14,8 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 
+import pickle
+
 #USER DEFINES
 #define the worksheet name from finn-resource-dashboard
 worksheet_name = "FCLayer_resources"
@@ -37,7 +39,7 @@ df = remove_fully_unfolded_configs(df, directory_name)
 df = clean_dataframe(df)
 df_initial = df
 
-def plot_relative_error_graph(predictor, X_test, Y_test, Y_hls, Y_finn_estimate):
+def plot_accuracy_graph(predictor, X_test, Y_test, Y_hls, Y_finn_estimate):
 
     Y_predicted = predictor.predict(X_test)
 
@@ -67,9 +69,43 @@ def plot_relative_error_graph(predictor, X_test, Y_test, Y_hls, Y_finn_estimate)
  
     plt.ylabel("Accuracy in predicting Block or Distributed RAM selection [%]")
     plt.title("Comparison of HLS, previous FINN method and Decision Tree classifier \n for RAM style predictions (Test set)")
-    fig.savefig('../test_set_results/test_set_error.png', bbox_inches='tight')
+    fig.savefig('../test_set_results/test_set_accuracy.png', bbox_inches='tight')
 
-    import pdb; pdb.set_trace()
+
+def save_dt_classifier_to_json_file(classifier):
+
+    #get the classifier parameters
+    classifier_params = classifier.get_params()
+
+    #get the classifier attributes
+    attributes = {}
+    
+    attributes['classes_'] = (classifier.classes_).tolist()
+    attributes['feature_importances_'] = (classifier.feature_importances_).tolist()
+    attributes['max_features_'] = int(classifier.max_features_)
+    attributes['n_classes_'] = int(classifier.n_classes_)
+    attributes['n_features_'] = int(classifier.n_features_)
+    attributes['n_outputs_'] = int(classifier.n_outputs_)
+    #there needs to be a method to serialize a tree object and to save it to json
+    #attributes['tree_'] = classifier.tree_
+
+    dict_to_write = {}
+    dict_to_write['classifier_params'] = classifier_params
+    dict_to_write['attributes'] = attributes
+    
+    with open('../models/fclayer_ram_style_classifier.json', 'w') as file:
+        json.dump(dict_to_write, file)
+
+def save_dt_classifier(classifier):
+    with open('../models/fclayer_ram_style_classifier.pkl', 'wb') as file:
+        pickle.dump(classifier, file)
+
+def restore_dt_classifier():
+
+    with open('../models/fclayer_ram_style_classifier.pkl', 'rb') as file:
+        clf = pickle.load(file)
+    
+    return clf
 
 def train_ram_class_predictor(df):
     
@@ -151,10 +187,24 @@ def train_ram_class_predictor(df):
     print('Accuracy of SVM classifier on test set: {:.2f}'
         .format(svm.score(X_test, y_test)))
     
+    #TODO compare the accuracy scores and return the best classifier
     predictor = clf
-    #import pdb; pdb.set_trace()
-    plot_relative_error_graph(predictor, X_test, y_test, Y_test_hls, Y_test_finn_estimate)
+
+    #plot the accuracy of the 3 methods
+    plot_accuracy_graph(predictor, X_test, y_test, Y_test_hls, Y_test_finn_estimate)
     
+    #save the classifier
+    #save_dt_classifier_to_json_file(predictor)
+    save_dt_classifier(predictor)
+
+    #test the classifier restoring 
+    clf_restored = restore_dt_classifier()
+    print('Accuracy of Decision Tree classifier RESTORED on training set: {:.2f}'
+        .format(clf_restored.score(X_train, y_train)))
+    print('Accuracy of Decision Tree classifier RESTORED on test set: {:.2f}'
+        .format(clf_restored.score(X_test, y_test)))
+
+    #import pdb; pdb.set_trace()
     return predictor
 
 def compute_bram(mh, mw, pe, simd, wdt, mem_mode, ram_style = "auto"):
@@ -227,6 +277,7 @@ def estimate_ram(df, predictor):
 predictor = train_ram_class_predictor(df)
 df_finn_estimate, df_synth = estimate_ram(df_initial, predictor)
 
+#plot rel error graph
 df_synth["Total_BRAM_18K_denom"] = df_synth["Total_BRAM_18K"].apply(lambda x: 1 if x == 0 else x)
 
 df_finn_estimate['synth_result'] = df_synth["Total_BRAM_18K"]
@@ -246,6 +297,7 @@ fig.savefig('../test_set_results/blabla_new.png', bbox_inches='tight')
 
 filepath = "../test_set_results/updated_fclayer_database_finn_estimate.csv"
 
+#save data to csv file
 df_finn_estimate.to_csv(filepath, index = False, header=True)
 
 #import pdb; pdb.set_trace()
