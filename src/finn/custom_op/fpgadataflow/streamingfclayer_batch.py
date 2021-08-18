@@ -48,6 +48,9 @@ from finn.util.data_packing import (
 from . import templates
 import textwrap
 
+#used for restoring the ram style classifier
+import pickle
+
 # ONNX i/o tensor shape assumptions for StreamingFCLayer:
 # input 0 is the input tensor, shape (.., i_size) = (..., MW)
 # input 1 is the weight tensor, shape (i_size, o_size) = (MW, MH)
@@ -265,10 +268,23 @@ class StreamingFCLayer_Batch(HLSCustomOp):
         mem_width = Q * W * P
         mmode = self.get_nodeattr("mem_mode")
         mstyle = self.get_nodeattr("ram_style")
+
+        #restore ram style classifier and predict block or distributed ram
+        #if output==1 -> BRAM, else LUTRAM
+        with open('../models/fclayer_ram_style_classifier.pkl', 'rb') as file:
+            ram_style_classifier = pickle.load(file)
+        ram_style = ram_style_classifier.predict([[mem_width, omega]])
+
+        """
         if (mmode == "decoupled" and mstyle in ["distributed", "ultra"]) or (
             mmode == "const" and self.calc_wmem() <= 128
         ):
             return 0
+        """
+        if (mmode == "decoupled" and mstyle in ["distributed", "ultra"]) or (
+            mmode == "const" and ram_style==1) or (mstyle=="auto" and ram_style==1):
+            return 0
+
         # assuming SDP mode RAMB18s (see UG573 Table 1-10)
         # assuming decoupled (RTL) memory, which is more efficient than const (HLS)
         if mem_width == 1:
@@ -322,6 +338,7 @@ class StreamingFCLayer_Batch(HLSCustomOp):
         P = self.get_nodeattr("PE")
         Q = self.get_nodeattr("SIMD")
         MW = self.get_nodeattr("MW")
+        MH = self.get_nodeattr("MH")
         wdt = self.get_weight_datatype()
         W = wdt.bitwidth()
         # determine tdt with input and weight data types
@@ -333,11 +350,25 @@ class StreamingFCLayer_Batch(HLSCustomOp):
         c2 = 0
         mmode = self.get_nodeattr("mem_mode")
         mstyle = self.get_nodeattr("ram_style")
+
+        omega = (MH * MW) / (Q * P)
+        mem_width = Q * W * P
+        #restore ram style classifier and predict block or distributed ram
+        #if output==1 -> BRAM, else LUTRAM
+        with open('../models/fclayer_ram_style_classifier.pkl', 'rb') as file:
+            ram_style_classifier = pickle.load(file)
+        ram_style = ram_style_classifier.predict([[mem_width, omega]])
+
+        """
         if (mmode == "decoupled" and mstyle == "distributed") or (
             mmode == "const" and self.calc_wmem() <= 128
         ):
             c2 = (P * Q * W) * math.ceil(self.calc_wmem() / 64)
-
+        """
+        if (mmode == "decoupled" and mstyle == "distributed") or (
+            mmode == "const" and ram_style==0) or (mstyle=="auto" and ram_style==1)::
+            c2 = (P * Q * W) * math.ceil(self.calc_wmem() / 64)
+        
         # multiplication
         res_type = self.get_nodeattr("resType")
         if res_type == "dsp":
