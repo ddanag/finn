@@ -1,12 +1,17 @@
 import os
 import math
-import sklearn
+import time
 import numpy as np
 import pandas as pd
 import matplotlib
 import matplotlib.pyplot as plt
 import scipy.stats as sts
 from numpy import inf
+
+import sklearn
+from sklearnex import patch_sklearn
+patch_sklearn()
+
 from sklearn.svm import SVR
 from sklearn import model_selection
 from sklearn.linear_model import LinearRegression
@@ -18,6 +23,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import mean_squared_error, max_error, mean_absolute_percentage_error
 from finn.util.gdrive import *
 import csv
+from itertools import product
+from sklearn.utils import shuffle
 
 def clean_dataframe(df):
     #This function checks if every parameter configuration has the resource utilization from
@@ -124,18 +131,349 @@ def filter_dataframe(df, filtering_dict):
 
     return df
 
-def remove_fully_unfolded_configs(df):
+def remove_fully_unfolded_configs(df, directory_name):
 
-    drop_index_list = []
+    if directory_name == 'FCLayer':
+        drop_index_list = []
 
-    for index, row in df.iterrows():
-        if row["mh"] == row["pe"] and row["mw"] == row["simd"]:
-            drop_index_list.append(index)
-   
-    df = df.drop(drop_index_list)
-    df = df.reset_index(drop=True)
+        for index, row in df.iterrows():
+            if row["mh"] == row["pe"] and row["mw"] == row["simd"]:
+                drop_index_list.append(index)
+    
+        df = df.drop(drop_index_list)
+        df = df.reset_index(drop=True)
+    elif directory_name == 'Thresholding':
+        drop_index_list = []
 
+        for index, row in df.iterrows():
+            if row["ich"] == row["pe"]:
+                drop_index_list.append(index)
+    
+        df = df.drop(drop_index_list)
+        df = df.reset_index(drop=True)
     return df
+
+def data_augmentation_analytical_method_fclayer(X_train, Y_train, X_test, features):
+
+    mh = [16, 64, 128, 256, 512, 1024]
+    mw = [16, 64, 128, 512, 1024, 2048]
+
+    pe = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
+    simd = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
+
+    wdt = [1, 2, 4]
+    idt = [1, 2, 4] 
+
+    act = [0, 1, 2, 4]
+    mem_mode= [0, 1, 2]
+    
+    df_train = pd.DataFrame(X_train)
+    df_test = pd.DataFrame(X_test)
+
+    for feature in features:
+        df_train = df_train.rename(columns={features.index(feature) : feature})
+        df_test = df_test.rename(columns={features.index(feature) : feature})
+
+    df_train['lut'] = Y_train
+
+    #sort the dataframe and reset index
+    #make sure you shuffle X_train at the end
+    df_train = df_train.sort_values(features)
+    df_train = df_train.reset_index(drop=True)
+
+    #get all possible combinations in a dataframe
+    if len(features) > 6:
+        df_all_combs = pd.DataFrame(list(product(mh, mw, pe, simd, wdt, idt, act, mem_mode)), columns=['mh', 'mw', 'pe', 'simd', 'idt', 'wdt', 'act', 'mem_mode'])
+    else:
+        df_all_combs = pd.DataFrame(list(product(mh, mw, pe, simd, wdt, idt)), columns=['mh', 'mw', 'pe', 'simd', 'idt', 'wdt'])
+
+    #remove the feature combinations found in X_test
+    df_all_combs = pd.concat([df_all_combs, df_test, df_test]).drop_duplicates(keep=False)
+
+    #remove combinations where pe > mh and simd > mw
+    df_all_combs = df_all_combs[df_all_combs.pe <= df_all_combs.mh]
+    df_all_combs = df_all_combs[df_all_combs.simd <= df_all_combs.mw]
+
+    df_train_copy = df_train
+    df_train_copy = df_train_copy.drop(columns = ['lut'])
+
+    #remove what's already in X_train
+    df_all_combs = pd.concat([df_all_combs, df_train_copy, df_train_copy]).drop_duplicates(keep=False)
+
+    #very slow
+    """
+    #extending only for pe now, need to remove the combs with different simd than found in X_train
+    parameters = ['mh', 'mw', 'simd', 'wdt', 'idt']
+    keep_rows_list = []
+    for index1, row1 in df_all_combs[parameters].iterrows():
+        for index2, row2 in df_train_copy[parameters].iterrows():
+            #if row.isin(row2).all(): -there's a problem with this returns true when it shouldn't    
+            flag = True
+            for key in row1.keys():
+                if row1[key] != row2[key]:     
+                    #import pdb; pdb.set_trace()
+                    flag = False
+                    break
+            if flag == True: 
+                keep_rows_list.append(index1)
+                #df_train_copy = df_train_copy.drop(index = index2)
+                break
+    """
+    #other method
+    if len(features) > 6:
+        parameters = ['mh', 'mw', 'simd', 'wdt', 'idt', 'act', 'mem_mode']
+    else:
+        parameters = ['mh', 'mw', 'simd', 'wdt', 'idt']
+    
+    keep_rows_list = []
+    df_temp = pd.DataFrame()
+    for index1, row1 in df_all_combs[parameters].iterrows():
+        if len(features) > 6:
+            df_temp = df_train_copy.loc[(df_train_copy.mh == row1['mh']) & (df_train_copy.mw == row1['mw']) & (df_train_copy.simd == row1['simd']) & (df_train_copy.idt == row1['idt']) & (df_train_copy.wdt == row1['wdt']) & (df_train_copy.act == row1['act']) & (df_train_copy.mem_mode == row1['mem_mode'])]
+        else:
+            df_temp = df_train_copy.loc[(df_train_copy.mh == row1['mh']) & (df_train_copy.mw == row1['mw']) & (df_train_copy.simd == row1['simd']) & (df_train_copy.idt == row1['idt']) & (df_train_copy.wdt == row1['wdt'])]
+        
+        if not df_temp.empty:
+            keep_rows_list.append(index1)
+
+    df_all_combs = df_all_combs[df_all_combs.index.isin(keep_rows_list)]
+    df_all_combs = df_all_combs.reset_index(drop=True)
+    
+    #add lut column
+    df_all_combs['lut'] = np.nan
+    if len(features) > 6:
+        parameters = ['mh', 'mw', 'pe', 'simd', 'wdt', 'idt', 'act', 'mem_mode']
+    else:
+        parameters = ['mh', 'mw', 'pe', 'simd', 'wdt', 'idt']
+    
+    for index1, row1 in df_all_combs[parameters].iterrows():
+        #find the closest pe value
+        if len(features) > 6:
+            df_temp = df_train.loc[(df_train.mh == row1['mh']) & (df_train.mw == row1['mw']) & (df_train.simd == row1['simd']) & (df_train.idt == row1['idt']) & (df_train.wdt == row1['wdt']) & (df_train.act == row1['act']) & (df_train.mem_mode == row1['mem_mode'])]
+            df_all_combs_temp = df_all_combs.loc[(df_all_combs.mh == row1['mh']) & (df_all_combs.mw == row1['mw']) & (df_all_combs.pe == row1['pe'])  & (df_all_combs.simd == row1['simd']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.wdt == row1['wdt']) & (df_all_combs.act == row1['act']) & (df_all_combs.mem_mode == row1['mem_mode'])]
+            df_all_combs.loc[(df_all_combs.mh == row1['mh']) & (df_all_combs.mw == row1['mw']) & (df_all_combs.pe == row1['pe'])  & (df_all_combs.simd == row1['simd']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.wdt == row1['wdt']) & (df_all_combs.act == row1['act']) & (df_all_combs.mem_mode == row1['mem_mode']), "lut"] = int(df_temp.iloc[-1].lut) * (int(df_all_combs_temp.pe)/int(df_temp.iloc[-1].pe))
+        else:
+            df_temp = df_train.loc[(df_train.mh == row1['mh']) & (df_train.mw == row1['mw']) & (df_train.simd == row1['simd']) & (df_train.idt == row1['idt']) & (df_train.wdt == row1['wdt'])]
+            df_all_combs_temp = df_all_combs.loc[(df_all_combs.mh == row1['mh']) & (df_all_combs.mw == row1['mw']) & (df_all_combs.pe == row1['pe'])  & (df_all_combs.simd == row1['simd']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.wdt == row1['wdt'])]
+            df_all_combs.loc[(df_all_combs.mh == row1['mh']) & (df_all_combs.mw == row1['mw']) & (df_all_combs.pe == row1['pe'])  & (df_all_combs.simd == row1['simd']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.wdt == row1['wdt']), "lut"] = int(df_temp.iloc[-1].lut) * (int(df_all_combs_temp.pe)/int(df_temp.iloc[-1].pe))
+
+    df_final = pd.concat([df_all_combs, df_train], join='outer').drop_duplicates(keep=False)
+    df_final = df_final.sort_values(features)
+    df_final = shuffle(df_final)
+    df_final = df_final.reset_index(drop=True)
+
+    Y_final = df_final['lut'].to_numpy()
+    df_final = df_final.drop(columns = ['lut'])
+    X_final = df_final.to_numpy()
+    #import pdb; pdb.set_trace()
+    return X_final, Y_final
+
+def data_augmentation_analytical_method_thresholding(X_train, Y_train, X_test, features):
+
+    ich = [3, 16, 32, 48, 64, 80, 96, 128, 160, 192, 256, 320, 512, 784]
+    pe = [1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 49, 64, 80, 96, 98, 128, 160, 192, 196, 256, 320, 392, 512, 784]
+    idt = [12, 16, 20, 24, 28, 32]
+    act = [1, 2, 3, 4, 5]
+    mem_mode = [0, 1]
+    ram_style = [0, 1, 2]
+    
+    df_train = pd.DataFrame(X_train)
+    df_test = pd.DataFrame(X_test)
+
+    for feature in features:
+        df_train = df_train.rename(columns={features.index(feature) : feature})
+        df_test = df_test.rename(columns={features.index(feature) : feature})
+
+    df_train['lut'] = Y_train
+
+    #sort the dataframe and reset index
+    #make sure you shuffle X_train at the end
+    df_train = df_train.sort_values(features)
+    df_train = df_train.reset_index(drop=True)
+
+    #get all possible combinations in a dataframe
+    if len(features) > 4:
+        df_all_combs = pd.DataFrame(list(product(ich, pe, idt, act, mem_mode, ram_style)), columns=['ich', 'pe', 'idt', 'act', 'mem_mode', 'ram_style'])
+    else:
+        df_all_combs = pd.DataFrame(list(product(ich, pe, idt, act)), columns=['ich', 'pe', 'idt', 'act'])
+
+    #remove the feature combinations found in X_test
+    df_all_combs = pd.concat([df_all_combs, df_test, df_test]).drop_duplicates(keep=False)
+
+    #remove combinations where pe > ich
+    df_all_combs = df_all_combs[df_all_combs.pe <= df_all_combs.ich]
+
+    df_train_copy = df_train
+    df_train_copy = df_train_copy.drop(columns = ['lut'])
+
+    #remove what's already in X_train
+    df_all_combs = pd.concat([df_all_combs, df_train_copy, df_train_copy]).drop_duplicates(keep=False)
+
+    #other method
+    if len(features) > 4:
+        parameters = ['ich', 'pe', 'idt', 'act', 'mem_mode', 'ram_style']
+    else:
+        parameters = ['ich', 'pe', 'idt', 'act']
+    
+    keep_rows_list = []
+    df_temp = pd.DataFrame()
+    for index1, row1 in df_all_combs[parameters].iterrows():
+        if len(features) > 4:
+            df_temp = df_train_copy.loc[(df_train_copy.ich == row1['ich']) & (df_train_copy.idt == row1['idt']) & (df_train_copy.act == row1['act']) & (df_train_copy.mem_mode == row1['mem_mode']) & (df_train_copy.ram_style == row1['ram_style'])]
+        else:
+            df_temp = df_train_copy.loc[(df_train_copy.ich == row1['ich']) & (df_train_copy.idt == row1['idt']) & (df_train_copy.act == row1['act'])]
+        
+        if not df_temp.empty:
+            keep_rows_list.append(index1)
+
+    df_all_combs = df_all_combs[df_all_combs.index.isin(keep_rows_list)]
+    df_all_combs = df_all_combs.reset_index(drop=True)
+    
+    #add lut column
+    df_all_combs['lut'] = np.nan
+    if len(features) > 4:
+        parameters = ['ich', 'pe', 'idt', 'act', 'mem_mode', 'ram_style']
+    else:
+        parameters = ['ich', 'pe', 'idt', 'act']
+    
+    for index1, row1 in df_all_combs[parameters].iterrows():
+        #find the closest pe value
+        if len(features) > 4:
+            df_temp = df_train.loc[(df_train.ich == row1['ich']) & (df_train.idt == row1['idt']) & (df_train.act == row1['act']) & (df_train.mem_mode == row1['mem_mode']) & (df_train.ram_style == row1['ram_style'])]
+            df_all_combs_temp = df_all_combs.loc[(df_all_combs.ich == row1['ich']) & (df_all_combs.pe == row1['pe']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.act == row1['act']) & (df_all_combs.mem_mode == row1['mem_mode']) & (df_all_combs.ram_style == row1['ram_style'])]
+            df_all_combs.loc[(df_all_combs.ich == row1['ich']) & (df_all_combs.pe == row1['pe']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.act == row1['act']) & (df_all_combs.mem_mode == row1['mem_mode']) & (df_all_combs.ram_style == row1['ram_style']), "lut"] = int(df_temp.iloc[-1].lut) * (int(df_all_combs_temp.pe)/int(df_temp.iloc[-1].pe))
+        else:
+            df_temp = df_train.loc[(df_train.ich == row1['ich']) & (df_train.idt == row1['idt']) & (df_train.act == row1['act'])]
+            df_all_combs_temp = df_all_combs.loc[(df_all_combs.ich == row1['ich']) & (df_all_combs.pe == row1['pe']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.act == row1['act'])]
+            df_all_combs.loc[(df_all_combs.ich == row1['ich']) & (df_all_combs.pe == row1['pe']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.act == row1['act']), "lut"] = int(df_temp.iloc[-1].lut) * (int(df_all_combs_temp.pe)/int(df_temp.iloc[-1].pe))
+
+    df_final = pd.concat([df_all_combs, df_train], join='outer').drop_duplicates(keep=False)
+    df_final = df_final.sort_values(features)
+    df_final = shuffle(df_final)
+    df_final = df_final.reset_index(drop=True)
+
+    Y_final = df_final['lut'].to_numpy()
+    df_final = df_final.drop(columns = ['lut'])
+    X_final = df_final.to_numpy()
+    #import pdb; pdb.set_trace()
+    return X_final, Y_final
+
+def data_augmentation_nonlinear_interpolation_method(X_train, Y_train, X_test, features):
+
+    mh = [16, 64, 128, 256, 512, 1024]
+    mw = [16, 64, 128, 512, 1024, 2048]
+
+    pe = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
+    simd = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048]
+
+    wdt = [1, 2, 4]
+    idt = [1, 2, 4] 
+    df_train = pd.DataFrame(X_train)
+    df_test = pd.DataFrame(X_test)
+
+    for feature in features:
+        df_train = df_train.rename(columns={features.index(feature) : feature})
+        df_test = df_test.rename(columns={features.index(feature) : feature})
+
+    df_train['lut'] = Y_train
+
+    #sort the dataframe and reset index
+    #make sure you shuffle X_train at the end
+    df_train = df_train.sort_values(features)
+    df_train = df_train.reset_index(drop=True)
+
+    #get all possible combinations in a dataframe
+    df_all_combs = pd.DataFrame(list(product(mh, mw, pe, simd, wdt, idt)), columns=['mh', 'mw', 'pe', 'simd', 'idt', 'wdt'])
+
+    #remove the feature combinations found in X_test
+    df_all_combs = pd.concat([df_all_combs, df_test, df_test]).drop_duplicates(keep=False)
+
+    #remove combinations where pe > mh and simd > mw
+    df_all_combs = df_all_combs[df_all_combs.pe <= df_all_combs.mh]
+    df_all_combs = df_all_combs[df_all_combs.simd <= df_all_combs.mw]
+
+    df_train_copy = df_train
+    df_train_copy = df_train_copy.drop(columns = ['lut'])
+
+    #remove what's already in X_train
+    df_all_combs = pd.concat([df_all_combs, df_train_copy, df_train_copy]).drop_duplicates(keep=False)
+    
+    #add lut column
+    df_all_combs['lut'] = np.nan
+
+    #pe
+    #do the non linear interpolation
+    parameters = ['mh', 'mw', 'pe', 'simd', 'wdt', 'idt']
+    for index1, row1 in df_all_combs[parameters].iterrows():
+        #find the closest pe value
+        df_temp = df_train.loc[(df_train.mh == row1['mh']) & (df_train.mw == row1['mw']) & (df_train.simd == row1['simd']) & (df_train.idt == row1['idt']) & (df_train.wdt == row1['wdt'])]
+
+        df_temp_orig = df_temp
+
+        if not df_temp.empty:   
+            df_temp = df_temp.append(row1, ignore_index=True)
+            df_temp = df_temp.sort_values(features)
+            df_temp = df_temp.reset_index(drop=True) 
+
+            if len(df_temp) > 2:
+                if not ((row1 == df_temp.iloc[0][:-1]).all() or (row1 == df_temp.iloc[-1][:-1]).all()):
+                    df_temp = df_temp.interpolate()
+                    
+                    df_temp = pd.concat([df_temp, df_temp_orig, df_temp_orig]).drop_duplicates(keep=False)
+                    
+                    #df_all_combs_temp = df_all_combs.loc[(df_all_combs.mh == row1['mh']) & (df_all_combs.mw == row1['mw']) & (df_all_combs.pe == row1['pe'])  & (df_all_combs.simd == row1['simd']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.wdt == row1['wdt'])]
+                    df_all_combs.loc[(df_all_combs.mh == row1['mh']) & (df_all_combs.mw == row1['mw']) & (df_all_combs.pe == row1['pe'])  & (df_all_combs.simd == row1['simd']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.wdt == row1['wdt']), "lut"] = int(df_temp["lut"])
+                    df_train = df_train.append(row1, ignore_index=True)
+                    df_train.loc[(df_train.mh == row1['mh']) & (df_train.mw == row1['mw']) & (df_train.pe == row1['pe'])  & (df_train.simd == row1['simd']) & (df_train.idt == row1['idt']) & (df_train.wdt == row1['wdt']), "lut"] = int(df_temp["lut"])
+                else:
+                    df_all_combs.loc[(df_all_combs.mh == row1['mh']) & (df_all_combs.mw == row1['mw']) & (df_all_combs.pe == row1['pe'])  & (df_all_combs.simd == row1['simd']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.wdt == row1['wdt']), "lut"] = int(df_temp_orig.iloc[-1].lut) * (int(row1['pe'])/int(df_temp_orig.iloc[-1].pe))
+                    df_train = df_train.append(row1, ignore_index=True)
+                    df_train.loc[(df_train.mh == row1['mh']) & (df_train.mw == row1['mw']) & (df_train.pe == row1['pe'])  & (df_train.simd == row1['simd']) & (df_train.idt == row1['idt']) & (df_train.wdt == row1['wdt']), "lut"] = int(df_temp_orig.iloc[-1].lut) * (int(row1['pe'])/int(df_temp_orig.iloc[-1].pe))
+            
+            else:
+                df_all_combs.loc[(df_all_combs.mh == row1['mh']) & (df_all_combs.mw == row1['mw']) & (df_all_combs.pe == row1['pe'])  & (df_all_combs.simd == row1['simd']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.wdt == row1['wdt']), "lut"] = int(df_temp_orig.iloc[-1].lut) * (int(row1['pe'])/int(df_temp_orig.iloc[-1].pe))
+                df_train = df_train.append(row1, ignore_index=True)
+                df_train.loc[(df_train.mh == row1['mh']) & (df_train.mw == row1['mw']) & (df_train.pe == row1['pe'])  & (df_train.simd == row1['simd']) & (df_train.idt == row1['idt']) & (df_train.wdt == row1['wdt']), "lut"] = int(df_temp_orig.iloc[-1].lut) * (int(row1['pe'])/int(df_temp_orig.iloc[-1].pe))
+                
+    #simd
+    #do the non linear interpolation
+    parameters = ['mh', 'mw', 'pe', 'simd', 'wdt', 'idt']
+    for index1, row1 in df_all_combs[parameters].iterrows():
+        #find the closest simd value
+        df_temp = df_train.loc[(df_train.mh == row1['mh']) & (df_train.mw == row1['mw']) & (df_train.pe == row1['pe']) & (df_train.idt == row1['idt']) & (df_train.wdt == row1['wdt'])]
+
+        df_temp_orig = df_temp
+
+        if not df_temp.empty:   
+            df_temp = df_temp.append(row1, ignore_index=True)
+            df_temp = df_temp.sort_values(features)
+            df_temp = df_temp.reset_index(drop=True) 
+
+            if len(df_temp) > 2:
+                if not ((row1 == df_temp.iloc[0][:-1]).all() or (row1 == df_temp.iloc[-1][:-1]).all()):
+                    df_temp = df_temp.interpolate()
+
+                    df_temp = pd.concat([df_temp, df_temp_orig, df_temp_orig]).drop_duplicates(keep=False)
+
+                    #df_all_combs_temp = df_all_combs.loc[(df_all_combs.mh == row1['mh']) & (df_all_combs.mw == row1['mw']) & (df_all_combs.pe == row1['pe'])  & (df_all_combs.simd == row1['simd']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.wdt == row1['wdt'])]
+                    df_all_combs.loc[(df_all_combs.mh == row1['mh']) & (df_all_combs.mw == row1['mw']) & (df_all_combs.pe == row1['pe'])  & (df_all_combs.simd == row1['simd']) & (df_all_combs.idt == row1['idt']) & (df_all_combs.wdt == row1['wdt']), "lut"] = int(df_temp["lut"])
+                    df_train = df_train.append(row1, ignore_index=True)
+                    df_train.loc[(df_train.mh == row1['mh']) & (df_train.mw == row1['mw']) & (df_train.pe == row1['pe'])  & (df_train.simd == row1['simd']) & (df_train.idt == row1['idt']) & (df_train.wdt == row1['wdt']), "lut"] = int(df_temp["lut"])
+
+    #df_final = pd.concat([df_all_combs, df_train], join='outer').drop_duplicates(keep=False)
+    df_final = df_train
+    
+    #features_reordered = ['mh', 'mw', 'idt', 'wdt', 'pe', 'simd']
+    df_final = df_final.sort_values(features)
+    df_final = df_final.reset_index(drop=True) 
+    df_final = df_final[df_final['lut'].notna()]
+    df_final = shuffle(df_final)
+  
+    Y_final = df_final['lut'].to_numpy()
+    df_final = df_final.drop(columns = ['lut'])
+    X_final = df_final.to_numpy()
+
+    return X_final, Y_final
 
 def datatype_strip(x):
     if "DataType.UINT" in str(x):
@@ -199,7 +537,7 @@ def gridsearch_hyperparameters(X_train, Y_train, epsilon_grid):
 
     #search for the best SVR hyperparameters
     gscv_svr = GridSearchCV(
-        estimator=SVR(max_iter=2000000), #2000000 to stop when there is a convergence problem, #-1 default
+        estimator=SVR(max_iter=-1), #2000000 to stop when there is a convergence problem, #-1 default
         param_grid={
             #'kernel': ['poly', 'rbf', 'sigmoid'],
             'kernel': ['rbf'],
@@ -215,11 +553,15 @@ def gridsearch_hyperparameters(X_train, Y_train, epsilon_grid):
     print("Best hyperparameters set found on development set:", gscv_svr.best_params_)
     return best_svr
 
-def generate_regression_model(df, features, target, feature_scaler_selection=1, test_set_size=0.3, train_test_split_random_seed=2021, epsilon_dict={}, target_scaler = None):
+def generate_regression_model(df, features, target, feature_scaler_selection=1, test_set_size=0.3, train_test_split_random_seed=2021, epsilon_dict={}, target_scaler = None, data_augmentation = None):
     
     #target_scaler:   0 - log
     #                 1 - (synth-finn_estimate)
     #                 None    
+
+    #data augmentation:     None
+    #                       0 - data augmentation analytical method
+    #                       1 - data augmentation non-linear interpolation method 
 
     X, Y, X_hls, Y_hls, X_finn_estimate, Y_finn_estimate, label_encoder = extract_features_and_target(df, features, target)
 
@@ -230,6 +572,15 @@ def generate_regression_model(df, features, target, feature_scaler_selection=1, 
     #same split for hls and estimate, random needs to be set to same int value
     X_train_hls, X_test_hls, Y_train_hls, Y_test_hls = model_selection.train_test_split(X_hls, Y_hls, test_size = test_set_size, shuffle=True, random_state=train_test_split_random_seed)
     X_train_finn_estimate, X_test_finn_estimate, Y_train_finn_estimate, Y_test_finn_estimate = model_selection.train_test_split(X_finn_estimate, Y_finn_estimate, test_size = test_set_size, shuffle=True, random_state=train_test_split_random_seed)
+
+    if data_augmentation == 0:
+        if 'mh' in features:
+            X_train, Y_train = data_augmentation_analytical_method_fclayer(X_train, Y_train, X_test, features)
+        elif 'ich' in features:
+            #import pdb; pdb.set_trace()
+            X_train, Y_train = data_augmentation_analytical_method_thresholding(X_train, Y_train, X_test, features)
+    elif data_augmentation == 1:
+        X_train, Y_train = data_augmentation_nonlinear_interpolation_method(X_train, Y_train, X_test, features)
 
     #Feature Scaling - Normalization(feature_scaler_selection=0)/Standardization(feature_scaler_selection=1)
     if feature_scaler_selection:
@@ -274,8 +625,10 @@ def generate_regression_model(df, features, target, feature_scaler_selection=1, 
                                 "Carry": [1, 2, 5, 10, 15, 20, 50, 100],
                                 "Delay": [0.001, 0.01, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5]
                             }
-
+    tic = time.perf_counter()
     svr_estimator = gridsearch_hyperparameters(X_train, Y_train, epsilon_dict[target])
+    toc = time.perf_counter()
+    print(f"Grid search finished in {toc - tic:0.4f} seconds")
 
     #cross-validation
     scores = cross_val_score(svr_estimator, X_train, Y_train, cv=10, scoring = 'r2')
@@ -335,13 +688,13 @@ def plot_relative_error_graph(estimator, target_scaler, X_test, Y_test, Y_hls, Y
     #Solution to "zero division error" for relative error computation - using abs(x - x_true)/(1 + abs(x_true))
     Y_test_denominator = np.asarray([(abs(x) + 1) if x == 0 else x for x in Y_test])
     
-    #Y_relative_error_pred = (abs(Y_predicted - Y_test)/Y_test_denominator) * 100
-    #Y_relative_error_hls = (abs(Y_hls - Y_test)/Y_test_denominator) * 100
-    #Y_relative_error_estimate = (abs(Y_finn_estimate - Y_test)/Y_test_denominator) * 100
+    Y_relative_error_pred = (abs(Y_predicted - Y_test)/Y_test_denominator) * 100
+    Y_relative_error_hls = (abs(Y_hls - Y_test)/Y_test_denominator) * 100
+    Y_relative_error_estimate = (abs(Y_finn_estimate - Y_test)/Y_test_denominator) * 100
     
-    Y_relative_error_pred = ((Y_predicted - Y_test)/Y_test_denominator) * 100
-    Y_relative_error_hls = ((Y_hls - Y_test)/Y_test_denominator) * 100
-    Y_relative_error_estimate = ((Y_finn_estimate - Y_test)/Y_test_denominator) * 100
+    #Y_relative_error_pred = ((Y_predicted - Y_test)/Y_test_denominator) * 100
+    #Y_relative_error_hls = ((Y_hls - Y_test)/Y_test_denominator) * 100
+    #Y_relative_error_estimate = ((Y_finn_estimate - Y_test)/Y_test_denominator) * 100
     
     #compute mean relative error
     df = pd.DataFrame()
@@ -476,8 +829,8 @@ def plot_pareto_frontier_graph(estimator, target_scaler, X_test, Y_test, Y_hls, 
 def save_test_results_to_csv(svr_estimator, target_scaler, label_encoder, X_test_before_processing, X_test, Y_test, Y_hls, Y_finn_estimate, target, directory_name, features):
     #X_test - after processing
 
-    filename = 'test_set_results_%s_%s_without_fu.csv'% (directory_name, target)
-    filepath = "../graphs/%s/%s" % (directory_name, filename)
+    filename = 'test_set_results_%s_%s_general_tp_diff.csv'% (directory_name, target)
+    filepath = "../test_set_results/%s/%s" % (directory_name, filename)
 
     df = pd.DataFrame(X_test_before_processing, columns = features)
     try:
@@ -486,9 +839,9 @@ def save_test_results_to_csv(svr_estimator, target_scaler, label_encoder, X_test
     except:
         print("No label classes")
 
-    df['LUT synth'] = Y_test
-    df['LUT hls'] = Y_hls
-    df['LUT finn'] = Y_finn_estimate
+    df['%s synth' %target] = Y_test
+    df['%s hls' %target] = Y_hls
+    df['%s finn' %target] = Y_finn_estimate
 
     if target_scaler == 1:
         Y_predicted = svr_estimator.predict(X_test) + Y_finn_estimate
@@ -504,7 +857,8 @@ def save_test_results_to_csv(svr_estimator, target_scaler, label_encoder, X_test
     Y_relative_error_hls = (abs(Y_hls - Y_test)/Y_test_denominator) * 100
     Y_relative_error_estimate = (abs(Y_finn_estimate - Y_test)/Y_test_denominator) * 100
 
-    df['LUT svr'] = Y_predicted
+    df['%s svr' %target] = Y_predicted
+    df['hls_rel_error'] = Y_relative_error_hls
     df['finn_rel_error'] = Y_relative_error_estimate
     df['svr_rel_error'] = Y_relative_error_pred
     df['finn/svr rel error'] = Y_relative_error_estimate/Y_relative_error_pred

@@ -8,11 +8,11 @@ from finn.core.datatype import DataType
 
 #define report folder
 #report_folder_name = "output_mobilenetv1-w4a4_U250"
-#report_folder_name = "output_mobilenetv1-w4a4_U250_standalone_thresholds"
+report_folder_name = "output_mobilenetv1-w4a4_U250_standalone_thresholds"
 #report_folder_name = "output_cnv-w1a1_xilinx_u250_xdma_201830_2"
 #report_folder_name = "output_tfc-w2a2_xilinx_u250_xdma_201830_2"
 #report_folder_name = "output_tfc-w1a1_xilinx_u250_xdma_201830_2_standalone_thresholds"
-report_folder_name = "output_tfc-w1a1_xilinx_u250_xdma_201830_2_standalone_thresholds_folding_x2"
+#report_folder_name = "output_tfc-w1a1_xilinx_u250_xdma_201830_2_standalone_thresholds_folding_x2"
 #report_folder_name = "output_cnv-w2a2_xilinx_u250_xdma_201830_2_standalone_thresholds"
 #report_folder_name = "output_cnv-w2a2_xilinx_u250_xdma_201830_2_standalone_thresholds_folding_x2"
 

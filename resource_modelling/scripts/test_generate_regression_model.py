@@ -16,8 +16,8 @@ worksheet_name = "FCLayer_resources"
 #filtering_dict = {"act": [True, "None"], "mem_mode": [ True, "decoupled"]}
 #filtering_dict = {"act": [True, "None"]}
 #filtering_dict = {"mem_mode": [ True, "const"], "ram_style": [True, "distributed"]}
-#filtering_dict = {"dw": [ True, "0"], "ram_style": [True, "block"]}
-#filtering_dict = {"ram_style": [True, "block"]}
+#filtering_dict = {"dw": [ True, "0"]}
+#filtering_dict = {"dw": [ True, "0"], "ram_style": [True, "distributed"]}
 #filtering_dict = {"idt": [ False, "DataType.BIPOLAR"], "wdt": [False, "DataType.BIPOLAR"]}
 #filtering_dict = {"mem_mode": [ True, "decoupled"]}
 filtering_dict = {}
@@ -44,6 +44,7 @@ features = ["mh", "mw", "pe", "simd", "wdt", "idt", "act", "mem_mode"]
 
 #swu
 #features = ["ifm_dim", "ifm_ch", "simd", "k", "stride", "idt", "dw", "ram_style"]
+#features = ["ifm_dim", "ifm_ch", "simd", "k", "stride", "idt", "ram_style"]
 #features = ["ifm_dim", "ifm_ch", "simd", "k", "stride", "idt", "dw"]
 #features = ["ifm_dim", "ifm_ch", "simd", "k", "stride", "idt"]
 target = "LUT"
@@ -51,7 +52,7 @@ target = "LUT"
 #target_scaler:   0 - log
 #                 1 - (synth-finn_estimate)
 #                 None  
-target_scaler = 0
+target_scaler = 1
 
 #define the directory name where to save the graphs
 directory_name = "FCLayer"
@@ -75,12 +76,12 @@ df = pd.DataFrame(list_of_dicts)
 df = filter_dataframe(df, filtering_dict)
 
 #remove the fully unfolded configurations - outliers
-df = remove_fully_unfolded_configs(df)
+#df = remove_fully_unfolded_configs(df, directory_name)
 
 #Hint: clean the dataframe after filtering because cleaning 
 #takes a while (~5 min for ~22k samples)
 df = clean_dataframe(df)
-
+#import pdb; pdb.set_trace()
 if len(filtering_dict_unseen_df) != 0:
 #get the unseen dataframe and remove from df this subset
     df_unseen = filter_dataframe(df, filtering_dict_unseen_df)
@@ -101,6 +102,7 @@ attributes = {}
 estimator_params = svr_estimator.get_params()
 
 #save the attributes
+"""
 attributes['class_weight_'] = (svr_estimator.class_weight_).tolist()
 if svr_estimator.kernel == 'linear':
     attributes['coef_'] = (svr_estimator.coef_).tolist()
@@ -112,6 +114,7 @@ attributes['_n_support'] = (svr_estimator._n_support).tolist()
 attributes['shape_fit_'] = svr_estimator.shape_fit_
 attributes['support_'] = (svr_estimator.support_).tolist()
 attributes['support_vectors_'] = (svr_estimator.support_vectors_).tolist()
+"""
 
 dict_to_write = {}
 dict_to_write['params'] = estimator_params
@@ -124,7 +127,7 @@ except:
     print("There are no label encoder classes.")
 dict_to_write['target_scaler'] = target_scaler
 
-with open('../models/%s_%s_model_test.json' %(directory_name,target), 'w') as file:
+with open('../models/%s_%s_model.json' %(directory_name,target), 'w') as file:
     json.dump(dict_to_write, file)
 
 #compute metrics on test set

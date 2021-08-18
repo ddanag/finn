@@ -106,6 +106,9 @@ MANIFEST
 # results folder from resource modelling
 /resource_modelling/results/*
 
+# test set results folder from resource modelling
+/resource_modelling/test_set_results/*
+
 # excel files from scripts
 /resource_modelling/scripts/*.csv
 

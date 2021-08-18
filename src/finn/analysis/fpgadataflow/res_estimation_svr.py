@@ -99,8 +99,11 @@ def fclayer_res_estimation(inst):
             else:
                 input_set = [[mh, mw, pe, simd, wdt, idt, act, mem_mode_class]]
         else:
-        """   
-        input_set = [[mh, mw, pe, simd, wdt, idt, act, mem_mode_class]]
+        """
+        if res == 'LUT': 
+            input_set = [[mh, mw, pe, simd, wdt, idt]]
+        else:
+            input_set = [[mh, mw, pe, simd, wdt, idt, act, mem_mode_class]]
             
         feature_scaler = StandardScaler().fit(X_train_before)
         input_set = feature_scaler.transform(input_set)
