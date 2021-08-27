@@ -221,14 +221,7 @@ for ind in layers_df_reordered.index:
                 value = min(comparison_dict[key], key=lambda x:abs(int(x)-int(params_dict[key])))
                 value = int(value)
                 if (int(params_dict[key]) >= value - value/5) and (int(params_dict[key]) <= value + value/5):
-                    #if (int(params_dict[key]) == 784):
-                    #    matched = False
-                    #    break
-                        #import pdb; pdb.set_trace()
-                    #else:
                     matched = True    
-                    #if (int(params_dict[key]) == 784):
-                        #import pdb; pdb.set_trace()
                 else:
                     matched = False
                     break
@@ -245,12 +238,6 @@ for ind in layers_df_reordered.index:
 
 layers_df_reordered["res_svr_finn_lut"] = res_svr_finn
 
-
-#layers_df_reordered.drop(layers_df_reordered.index[index_out_of_range], inplace=True)
-#layers_df_reordered.reset_index(drop=True, inplace=True)
-
-###svr+hls
-
 ####temp
 #Solution to "zero division error" for relative error computation - using abs(x - x_true)/(1 + abs(x_true))
 layers_df_reordered['res_synth_lut_denom'] = np.asarray([(abs(x) + 1) if x == 0 else x for x in layers_df_reordered['res_synth_lut']])
@@ -259,8 +246,6 @@ layers_df_reordered['svr_rel_error'] = (abs(layers_df_reordered['res_svr_lut']  
 layers_df_reordered['hls_rel_error']  = (abs(layers_df_reordered['res_hls_lut'] - layers_df_reordered['res_synth_lut'])/layers_df_reordered['res_synth_lut_denom']) * 100
 layers_df_reordered['finn_rel_error']  = (abs(layers_df_reordered['res_finn_lut'] - layers_df_reordered['res_synth_lut'])/layers_df_reordered['res_synth_lut_denom']) * 100
 
-#import pdb; pdb.set_trace()
-####
 
 ###remove the layers with out of range parameters
 """

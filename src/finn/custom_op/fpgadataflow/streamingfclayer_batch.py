@@ -271,9 +271,9 @@ class StreamingFCLayer_Batch(HLSCustomOp):
 
         #restore ram style classifier and predict block or distributed ram
         #if output==1 -> BRAM, else LUTRAM
-        with open('../models/fclayer_ram_style_classifier.pkl', 'rb') as file:
+        with open('/workspace/finn/resource_modelling/models/fclayer_ram_style_classifier.pkl', 'rb') as file:
             ram_style_classifier = pickle.load(file)
-        ram_style = ram_style_classifier.predict([[mem_width, omega]])
+        ram_style_predicted_class = int(ram_style_classifier.predict([[mem_width, omega]]))
 
         """
         if (mmode == "decoupled" and mstyle in ["distributed", "ultra"]) or (
@@ -282,7 +282,7 @@ class StreamingFCLayer_Batch(HLSCustomOp):
             return 0
         """
         if (mmode == "decoupled" and mstyle in ["distributed", "ultra"]) or (
-            mmode == "const" and ram_style==1) or (mstyle=="auto" and ram_style==1):
+            mmode == "const" and ram_style_predicted_class == 0) or (mstyle=="auto" and ram_style_predicted_class == 0):
             return 0
 
         # assuming SDP mode RAMB18s (see UG573 Table 1-10)
@@ -355,9 +355,9 @@ class StreamingFCLayer_Batch(HLSCustomOp):
         mem_width = Q * W * P
         #restore ram style classifier and predict block or distributed ram
         #if output==1 -> BRAM, else LUTRAM
-        with open('../models/fclayer_ram_style_classifier.pkl', 'rb') as file:
+        with open('/workspace/finn/resource_modelling/models/fclayer_ram_style_classifier.pkl', 'rb') as file:
             ram_style_classifier = pickle.load(file)
-        ram_style = ram_style_classifier.predict([[mem_width, omega]])
+        ram_style_predicted_class = int(ram_style_classifier.predict([[mem_width, omega]]))
 
         """
         if (mmode == "decoupled" and mstyle == "distributed") or (
@@ -366,7 +366,7 @@ class StreamingFCLayer_Batch(HLSCustomOp):
             c2 = (P * Q * W) * math.ceil(self.calc_wmem() / 64)
         """
         if (mmode == "decoupled" and mstyle == "distributed") or (
-            mmode == "const" and ram_style==0) or (mstyle=="auto" and ram_style==1)::
+            mmode == "const" and ram_style_predicted_class == 0) or (mstyle=="auto" and ram_style_predicted_class == 0):
             c2 = (P * Q * W) * math.ceil(self.calc_wmem() / 64)
         
         # multiplication

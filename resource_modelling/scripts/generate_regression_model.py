@@ -829,7 +829,7 @@ def plot_pareto_frontier_graph(estimator, target_scaler, X_test, Y_test, Y_hls, 
 def save_test_results_to_csv(svr_estimator, target_scaler, label_encoder, X_test_before_processing, X_test, Y_test, Y_hls, Y_finn_estimate, target, directory_name, features):
     #X_test - after processing
 
-    filename = 'test_set_results_%s_%s_general_tp_diff.csv'% (directory_name, target)
+    filename = 'test_set_results_%s_%s_general_preprocessing_none.csv'% (directory_name, target)
     filepath = "../test_set_results/%s/%s" % (directory_name, filename)
 
     df = pd.DataFrame(X_test_before_processing, columns = features)

@@ -56,7 +56,7 @@ def fclayer_res_estimation(inst):
     dict_input_params ={'mh':mh, 'mw':mw, 'pe':pe, 'simd':simd, 'idt':str(inst.get_input_datatype()), 'idt_strip':idt, 'wdt':wdt, 'mem_mode':mem_mode, 'ram_style':ram_style, 'act':act}
 
     #resource_classes = ['LUT', 'LUTRAM', 'FF', 'Total_BRAM_18K', 'Carry'] 
-    resource_classes = ['LUT', 'FF']
+    resource_classes = ['LUT', 'Total_BRAM_18K']
     res_dict["Input_Params"] = dict_input_params
 
     for res in resource_classes:
@@ -100,10 +100,7 @@ def fclayer_res_estimation(inst):
                 input_set = [[mh, mw, pe, simd, wdt, idt, act, mem_mode_class]]
         else:
         """
-        if res == 'LUT': 
-            input_set = [[mh, mw, pe, simd, wdt, idt]]
-        else:
-            input_set = [[mh, mw, pe, simd, wdt, idt, act, mem_mode_class]]
+        input_set = [[mh, mw, pe, simd, wdt, idt, act, mem_mode_class]]
             
         feature_scaler = StandardScaler().fit(X_train_before)
         input_set = feature_scaler.transform(input_set)
@@ -158,63 +155,63 @@ def thresholding_res_estimation(inst):
     res_dict["Input_Params"] = dict_input_params
     
     #resource_classes = ['LUT', 'LUTRAM', 'FF', 'Total_BRAM_18K', 'Carry']
-    resource_classes = ['LUT', 'FF']
+    resource_classes = ['LUT', 'Total_BRAM_18K']
 
     for res in resource_classes:
-        if res == "Total_BRAM_18K" and ram_style == "distributed":
-            res_dict[res] = 0
-        elif res == "LUTRAM" and ram_style == "block":
-            res_dict[res] = 0
+        #if res == "Total_BRAM_18K" and ram_style == "distributed":
+        #    res_dict[res] = 0
+        #elif res == "LUTRAM" and ram_style == "block":
+        #    res_dict[res] = 0
+        #else:
+            #if res == "Total_BRAM_18K" and ram_style == "block":
+            #    file_path = '/workspace/finn/resource_modelling/models/Thresholding_%s_model_ram_style_block.json' % res
+            #elif res == "LUTRAM" and ram_style == "distributed":
+            #    file_path = '/workspace/finn/resource_modelling/models/Thresholding_%s_model_ram_style_distributed.json' % res
+            #else:
+        file_path = '/workspace/finn/resource_modelling/models/Thresholding_%s_model.json' % res
+        
+        with open(file_path, 'r') as file:
+            dict_read = json.load(file)
+
+        estimator_params = dict_read['params']
+        X_train_before = np.array(dict_read['X_train_before'])
+        X_train = np.array(dict_read['X_train'])
+        Y_train = np.array(dict_read['Y_train'])
+
+        try:
+            label_classes = dict_read['label_classes']
+        except:
+            print("There are no label classes.")
+
+        estimator = SVR()
+        estimator = estimator.set_params(**estimator_params)
+        estimator.fit(X_train, Y_train)
+
+        #TODO get both label encoders from json
+        if mem_mode == "const":
+            mem_mode_class = 0
+        elif mem_mode == "decoupled":
+            mem_mode_class = 1
+        
+        #TODO add the features list in jsons 
+        #if res == "Total_BRAM_18K" or res == "LUTRAM" or res == "LUT":
+        #    input_set = [[ich, pe, idt, act]]
+        #else:
+        ram_style_class = label_classes.index(ram_style)
+        input_set = [[ich, pe, idt, act, mem_mode_class, ram_style_class]]
+
+        feature_scaler = StandardScaler().fit(X_train_before)
+        input_set = feature_scaler.transform(input_set)
+        
+        if dict_read['target_scaler'] == 0:
+            svr_estimate = np.exp(estimator.predict(input_set.tolist()))
+        elif dict_read['target_scaler'] == 1:
+            svr_estimate = estimator.predict(input_set.tolist())
+            #TODO add FINN estimate
         else:
-            if res == "Total_BRAM_18K" and ram_style == "block":
-                file_path = '/workspace/finn/resource_modelling/models/Thresholding_%s_model_ram_style_block.json' % res
-            elif res == "LUTRAM" and ram_style == "distributed":
-                file_path = '/workspace/finn/resource_modelling/models/Thresholding_%s_model_ram_style_distributed.json' % res
-            else:
-                file_path = '/workspace/finn/resource_modelling/models/Thresholding_%s_model.json' % res
-            
-            with open(file_path, 'r') as file:
-                dict_read = json.load(file)
-
-            estimator_params = dict_read['params']
-            X_train_before = np.array(dict_read['X_train_before'])
-            X_train = np.array(dict_read['X_train'])
-            Y_train = np.array(dict_read['Y_train'])
-
-            try:
-                label_classes = dict_read['label_classes']
-            except:
-                print("There are no label classes.")
-
-            estimator = SVR()
-            estimator = estimator.set_params(**estimator_params)
-            estimator.fit(X_train, Y_train)
-
-            #TODO get both label encoders from json
-            if mem_mode == "const":
-                mem_mode_class = 0
-            elif mem_mode == "decoupled":
-                mem_mode_class = 1
-            
-            #TODO add the features list in jsons 
-            if res == "Total_BRAM_18K" or res == "LUTRAM" or res == "LUT":
-                input_set = [[ich, pe, idt, act]]
-            else:
-                ram_style_class = label_classes.index(ram_style)
-                input_set = [[ich, pe, idt, act, mem_mode_class, ram_style_class]]
-
-            feature_scaler = StandardScaler().fit(X_train_before)
-            input_set = feature_scaler.transform(input_set)
-            
-            if dict_read['target_scaler'] == 0:
-                svr_estimate = np.exp(estimator.predict(input_set.tolist()))
-            elif dict_read['target_scaler'] == 1:
-                svr_estimate = estimator.predict(input_set.tolist())
-                #TODO add FINN estimate
-            else:
-                svr_estimate = estimator.predict(input_set.tolist())
-            
-            res_dict[res] = svr_estimate.tolist()[0]
+            svr_estimate = estimator.predict(input_set.tolist())
+        
+        res_dict[res] = svr_estimate.tolist()[0]
 
     return res_dict
 
@@ -236,62 +233,62 @@ def convolutioninputgenerator_res_estimation(inst):
     res_dict["Input_Params"] = dict_input_params
 
     #resource_classes = ['LUT', 'LUTRAM', 'FF', 'Total_BRAM_18K', 'URAM', 'Carry']
-    resource_classes = ['LUT', 'FF']
+    resource_classes = ['LUT', 'Total_BRAM_18K']
 
     for res in resource_classes:
-        if res == "Total_BRAM_18K" and (ram_style == "distributed" or ram_style == "ultra"):
-            res_dict[res] = 0
-        elif res == "LUTRAM" and (ram_style == "block" or ram_style == "ultra"):
-            res_dict[res] = 0
-        elif res == "URAM" and (ram_style == "block" or ram_style == "distributed"):
-            res_dict[res] = 0
+        #if res == "Total_BRAM_18K" and (ram_style == "distributed" or ram_style == "ultra"):
+        #    res_dict[res] = 0
+        #elif res == "LUTRAM" and (ram_style == "block" or ram_style == "ultra"):
+        #    res_dict[res] = 0
+        #elif res == "URAM" and (ram_style == "block" or ram_style == "distributed"):
+        #    res_dict[res] = 0
+        #else:
+            #if res == "Total_BRAM_18K" and ram_style == "block":
+            #    file_path = '/workspace/finn/resource_modelling/models/Sliding_Window_Unit_%s_model_ram_style_block.json' % res
+            #elif res == "LUTRAM" and ram_style == "distributed":
+            #    file_path = '/workspace/finn/resource_modelling/models/Sliding_Window_Unit_%s_model_ram_style_distributed.json' % res
+            #elif res == "URAM" and ram_style == "ultra":
+            #    file_path = '/workspace/finn/resource_modelling/models/Sliding_Window_Unit_%s_model_ultra.json' % res
+            #else:
+        file_path = '/workspace/finn/resource_modelling/models/Sliding_Window_Unit_%s_model.json' % res
+        with open(file_path, 'r') as file:
+            dict_read = json.load(file)
+
+        estimator_params = dict_read['params']
+        X_train_before = np.array(dict_read['X_train_before'])
+        X_train = np.array(dict_read['X_train'])
+        Y_train = np.array(dict_read['Y_train'])
+        try:
+            label_classes = dict_read['label_classes']
+        except:
+            print("There are no label classes.")
+
+        estimator = SVR()
+        estimator = estimator.set_params(**estimator_params)
+        estimator.fit(X_train, Y_train)
+        
+        #TODO add the features list in jsons 
+        #if res == "Total_BRAM_18K" or res == "LUTRAM" or res == "URAM":
+        #    input_set = [[ifm_dim, ifm_ch, simd, k, stride, idt, dw]]
+        #elif res == "LUT":
+        #    input_set = [[ifm_dim, ifm_ch, simd, k, stride, idt]]
+        #else:
+        #label_encoder
+        ram_style_class = label_classes.index(ram_style)
+        input_set = [[ifm_dim, ifm_ch, simd, k, stride, idt, dw, ram_style_class]]
+            
+        feature_scaler = StandardScaler().fit(X_train_before)
+        input_set = feature_scaler.transform(input_set)
+        
+        if dict_read['target_scaler'] == 0:
+            svr_estimate = np.exp(estimator.predict(input_set.tolist()))
+        elif dict_read['target_scaler'] == 1:
+            svr_estimate = estimator.predict(input_set.tolist())
+            #TODO add FINN estimate
         else:
-            if res == "Total_BRAM_18K" and ram_style == "block":
-                file_path = '/workspace/finn/resource_modelling/models/Sliding_Window_Unit_%s_model_ram_style_block.json' % res
-            elif res == "LUTRAM" and ram_style == "distributed":
-                file_path = '/workspace/finn/resource_modelling/models/Sliding_Window_Unit_%s_model_ram_style_distributed.json' % res
-            elif res == "URAM" and ram_style == "ultra":
-                file_path = '/workspace/finn/resource_modelling/models/Sliding_Window_Unit_%s_model_ultra.json' % res
-            else:
-                file_path = '/workspace/finn/resource_modelling/models/Sliding_Window_Unit_%s_model.json' % res
-            with open(file_path, 'r') as file:
-                dict_read = json.load(file)
+            svr_estimate = estimator.predict(input_set.tolist())
 
-            estimator_params = dict_read['params']
-            X_train_before = np.array(dict_read['X_train_before'])
-            X_train = np.array(dict_read['X_train'])
-            Y_train = np.array(dict_read['Y_train'])
-            try:
-                label_classes = dict_read['label_classes']
-            except:
-                print("There are no label classes.")
-
-            estimator = SVR()
-            estimator = estimator.set_params(**estimator_params)
-            estimator.fit(X_train, Y_train)
-            
-            #TODO add the features list in jsons 
-            if res == "Total_BRAM_18K" or res == "LUTRAM" or res == "URAM":
-                input_set = [[ifm_dim, ifm_ch, simd, k, stride, idt, dw]]
-            elif res == "LUT":
-                input_set = [[ifm_dim, ifm_ch, simd, k, stride, idt]]
-            else:
-                #label_encoder
-                ram_style_class = label_classes.index(ram_style)
-                input_set = [[ifm_dim, ifm_ch, simd, k, stride, idt, dw, ram_style_class]]
-                
-            feature_scaler = StandardScaler().fit(X_train_before)
-            input_set = feature_scaler.transform(input_set)
-            
-            if dict_read['target_scaler'] == 0:
-                svr_estimate = np.exp(estimator.predict(input_set.tolist()))
-            elif dict_read['target_scaler'] == 1:
-                svr_estimate = estimator.predict(input_set.tolist())
-                #TODO add FINN estimate
-            else:
-                svr_estimate = estimator.predict(input_set.tolist())
-
-            res_dict[res] = svr_estimate.tolist()[0]
+        res_dict[res] = svr_estimate.tolist()[0]
 
     return res_dict
 

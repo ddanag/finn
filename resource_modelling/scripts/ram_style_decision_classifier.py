@@ -65,7 +65,7 @@ def plot_accuracy_graph(predictor, X_test, Y_test, Y_hls, Y_finn_estimate):
     y_values = [accuracy_hls, accuracy_finn_prev, accuracy_pred]
 
     fig = plt.figure(figsize=(8, 11))
-    plt.bar(x_labels, y_values, color ='r', width = 0.2)
+    plt.bar(x_labels, y_values, color ='r', width = 0.4)
  
     plt.ylabel("Accuracy in predicting Block or Distributed RAM selection [%]")
     plt.title("Comparison of HLS, previous FINN method and Decision Tree classifier \n for RAM style predictions (Test set)")
@@ -204,7 +204,7 @@ def train_ram_class_predictor(df):
     print('Accuracy of Decision Tree classifier RESTORED on test set: {:.2f}'
         .format(clf_restored.score(X_test, y_test)))
 
-    #import pdb; pdb.set_trace()
+    import pdb; pdb.set_trace()
     return predictor
 
 def compute_bram(mh, mw, pe, simd, wdt, mem_mode, ram_style = "auto"):
@@ -293,7 +293,7 @@ df_plot["new_finn_est"] = df_finn_estimate["bram_rel_error_new"]
 fig = plt.figure(figsize=(20, 11))
 boxplot = df_plot.boxplot(showmeans=True, showfliers=False, return_type='dict', color=dict(boxes='black', whiskers='black', medians='r', caps='black'), patch_artist=True)
 
-fig.savefig('../test_set_results/blabla_new.png', bbox_inches='tight')
+fig.savefig('../test_set_results/rel_error_whole_database.png', bbox_inches='tight')
 
 filepath = "../test_set_results/updated_fclayer_database_finn_estimate.csv"
 

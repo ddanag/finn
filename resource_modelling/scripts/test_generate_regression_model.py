@@ -3,7 +3,7 @@ from generate_regression_model import *
 import json
 import numpy as np
 
-#for test
+#for testing restoring the model from json file
 from sklearn.svm import SVR
 
 #USER DEFINES
@@ -52,7 +52,7 @@ target = "LUT"
 #target_scaler:   0 - log
 #                 1 - (synth-finn_estimate)
 #                 None  
-target_scaler = 1
+target_scaler = None
 
 #define the directory name where to save the graphs
 directory_name = "FCLayer"

@@ -18,13 +18,10 @@ report_folder_name = "output_mobilenetv1-w4a4_U250_standalone_thresholds"
 
 report_folder_path = "../results/%s/report" % report_folder_name
 
-#finn_estimate_file = "%s/estimate_layer_resources_copied.json" % report_folder_path
 finn_estimate_file = "%s/estimate_layer_resources.json" % report_folder_path
 hls_estimate_file = "%s/estimate_layer_resources_hls.json" % report_folder_path
-#hls_estimate_file = "%s/estimate_layer_resources_hls_copied.json" % report_folder_path
 svr_estimate_file = "%s/estimate_layer_resources_svr.json" % report_folder_path
 
-#synth_resources_file = "%s/post_synth_resources_copied.xml" % report_folder_path
 synth_resources_file = "%s/post_synth_resources.xml" % report_folder_path
 
 resource = 'LUT'

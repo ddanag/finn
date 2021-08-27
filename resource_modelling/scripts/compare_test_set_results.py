@@ -110,13 +110,13 @@ def plot_fclayer_models_test_set_results_bram():
 
     df_plot['HLS GM (FD)'] = df_general_with_fu_model['hls_rel_error']
     #df_plot['FINN GM (FD)'] = df_general_with_fu_model['finn_rel_error']
-    df_plot['FINN NEW GM (FD)'] = df_general_with_fu_model['finn_rel_error_new']
-    #df_plot['SVR GM (FD)'] = df_general_with_fu_model['svr_rel_error']
+    #df_plot['FINN NEW GM (FD)'] = df_general_with_fu_model['finn_rel_error_new']
+    df_plot['SVR GM (FD)'] = df_general_with_fu_model['svr_rel_error']
 
     df_plot['HLS GM (PD)'] = df_general_without_fu_model['hls_rel_error']
     #df_plot['FINN GM (PD)'] = df_general_without_fu_model['finn_rel_error']
-    df_plot['FINN NEW GM (PD)'] = df_general_without_fu_model['finn_rel_error_new']
-    #df_plot['SVR GM (PD)'] = df_general_without_fu_model['svr_rel_error']
+    #df_plot['FINN NEW GM (PD)'] = df_general_without_fu_model['finn_rel_error_new']
+    df_plot['SVR GM (PD)'] = df_general_without_fu_model['svr_rel_error']
 
     #df_plot['HLS SM (PD)'] = df_specialized_without_fu_model['hls_rel_error']
     #df_plot['FINN SM (PD)'] = df_specialized_without_fu_model['finn_rel_error']
@@ -126,7 +126,7 @@ def plot_fclayer_models_test_set_results_bram():
     fig = plt.figure(figsize=(20, 11))
     boxplot = df_plot.boxplot(showmeans=True, showfliers=False, return_type='dict', color=dict(boxes='black', whiskers='black', medians='r', caps='black'), patch_artist=True)
     
-    colors = ['lightskyblue', 'lightgreen', 'lightskyblue', 'lightgreen', 'lightskyblue', 'lightgreen']
+    colors = ['lightskyblue', 'lightyellow', 'lightskyblue', 'lightyellow']
     #colors = ['lightskyblue', 'lightyellow', 'lightskyblue', 'lightyellow', 'lightskyblue', 'lightyellow']
     #import pdb; pdb.set_trace()
     
@@ -140,7 +140,7 @@ def plot_fclayer_models_test_set_results_bram():
     plt.xticks(rotation = 45)
     plt.title('FCLayer - BRAM estimation model - Test Set Results')
     plt.ylabel('Relative error [%] ')
-    fig.savefig('../test_set_results/FCLayer/test_set_results_plot_bram_with_new_finn_est_4.png', bbox_inches='tight')
+    fig.savefig('../test_set_results/FCLayer/test_set_results_plot_bram_without_pd.png', bbox_inches='tight')
 
 def plot_thresholding_models_test_set_results_lut():
     general_model_file_name = "test_set_results_Thresholding_LUT_general"
@@ -165,9 +165,9 @@ def plot_thresholding_models_test_set_results_lut():
     df_specialized_min_fu_model = pd.read_csv(specialized_min_fu_model_folder_path)
 
     df_plot = pd.DataFrame()
-    #df_plot['HLS GM (FD)'] = df_general_model['hls_rel_error']
-    #df_plot['FINN GM (FD)'] = df_general_model['finn_rel_error']
-    #df_plot['SVR GM (FD)'] = df_general_model['svr_rel_error']
+    df_plot['HLS GM (FD)'] = df_general_model['hls_rel_error']
+    df_plot['FINN GM (FD)'] = df_general_model['finn_rel_error']
+    df_plot['SVR GM (FD)'] = df_general_model['svr_rel_error']
     
     #df_plot['HLS GM (FD + AUG)'] = df_general_augmentation_model['hls_rel_error']
     #df_plot['FINN GM (FD + AUG)'] = df_general_augmentation_model['finn_rel_error']
@@ -179,7 +179,7 @@ def plot_thresholding_models_test_set_results_lut():
 
     #df_plot['HLS GM (PD)'] = df_general_min_fu_model['hls_rel_error']
     #df_plot['FINN GM (PD)'] = df_general_min_fu_model['finn_rel_error']
-    df_plot['SVR GM (PD + AUG)'] = df_general_min_fu_augmentation_model['svr_rel_error']
+    #df_plot['SVR GM (PD + AUG)'] = df_general_min_fu_augmentation_model['svr_rel_error']
 
     #df_plot['HLS SM (FD)'] = df_specialized_model['hls_rel_error']
     #df_plot['FINN SM (FD)'] = df_specialized_model['finn_rel_error']
@@ -193,7 +193,7 @@ def plot_thresholding_models_test_set_results_lut():
     boxplot = df_plot.boxplot(showmeans=True, showfliers=False, return_type='dict', color=dict(boxes='black', whiskers='black', medians='r', caps='black'), patch_artist=True)
     
     #colors = ['lightskyblue', 'lightgreen', 'lightyellow', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow']
-    colors = ['lightskyblue', 'lightgreen', 'lightyellow', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow']
+    colors = ['lightskyblue', 'lightgreen', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow']
     
     for patch, color in zip(boxplot['means'], colors):
         patch.set_markeredgecolor('red')
@@ -205,7 +205,7 @@ def plot_thresholding_models_test_set_results_lut():
     plt.xticks(rotation = 45)
     plt.title('Thresholding Layer - LUT estimation model - Test Set Results')
     plt.ylabel('Relative error [%] ')
-    fig.savefig('../test_set_results/Thresholding/test_set_results_LUT_plot_without_outliers_min_fu.png', bbox_inches='tight')
+    fig.savefig('../test_set_results/Thresholding/test_set_results_LUT_plot_without_outliers_plus_fu.png', bbox_inches='tight')
 
 def plot_thresholding_models_test_set_results_bram():
 
@@ -258,23 +258,24 @@ def plot_SWU_models_test_set_results_lut():
     df_specialized_dw_1_model = pd.read_csv(specialized_dw_1_model_folder_path)
 
     df_plot = pd.DataFrame()
-    df_plot['HLS GM'] = df_general_model['hls_rel_error']
-    df_plot['FINN GM'] = df_general_model['finn_rel_error']
+    #df_plot['HLS GM'] = df_general_model['hls_rel_error']
+    #df_plot['FINN GM'] = df_general_model['finn_rel_error']
     df_plot['SVR GM'] = df_general_model['svr_rel_error']
 
-    df_plot['HLS SM (dw=0)'] = df_specialized_dw_0_model['hls_rel_error']
-    df_plot['FINN SM (dw=0)'] = df_specialized_dw_0_model['finn_rel_error']
+    #df_plot['HLS SM (dw=0)'] = df_specialized_dw_0_model['hls_rel_error']
+    #df_plot['FINN SM (dw=0)'] = df_specialized_dw_0_model['finn_rel_error']
     df_plot['SVR SM (dw=0)'] = df_specialized_dw_0_model['svr_rel_error']
 
-    df_plot['HLS SM (dw=1)'] = df_specialized_dw_1_model['hls_rel_error']
-    df_plot['FINN SM (dw=1)'] = df_specialized_dw_1_model['finn_rel_error']
+    #df_plot['HLS SM (dw=1)'] = df_specialized_dw_1_model['hls_rel_error']
+    #df_plot['FINN SM (dw=1)'] = df_specialized_dw_1_model['finn_rel_error']
     df_plot['SVR SM (dw=1)'] = df_specialized_dw_1_model['svr_rel_error']
 
     fig = plt.figure(figsize=(20, 11))
     boxplot = df_plot.boxplot(showmeans=True, showfliers=False, return_type='dict', color=dict(boxes='black', whiskers='black', medians='r', caps='black'), patch_artist=True)
     
-    colors = ['lightskyblue', 'lightgreen', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow']
-    
+    #colors = ['lightskyblue', 'lightgreen', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow']
+    colors = ['lightyellow', 'lightyellow', 'lightyellow']
+
     for patch, color in zip(boxplot['means'], colors):
         patch.set_markeredgecolor('red')
         patch.set_markerfacecolor('red')
@@ -285,7 +286,7 @@ def plot_SWU_models_test_set_results_lut():
     plt.xticks(rotation = 45)
     plt.title('Sliding Window Unit - LUT estimation model - Test Set Results')
     plt.ylabel('Relative error [%] ')
-    fig.savefig('../test_set_results/Sliding_Window_Unit/test_set_results_LUT_plot_without_outliers.png', bbox_inches='tight')
+    fig.savefig('../test_set_results/Sliding_Window_Unit/test_set_results_LUT_plot_only_svr.png', bbox_inches='tight')
 
 def plot_SWU_models_test_set_results_bram():
     general_model_file_name = "test_set_results_Sliding_Window_Unit_Total_BRAM_18K_general"
@@ -331,35 +332,35 @@ def plot_SWU_models_test_set_results_bram():
     fig.savefig('../test_set_results/Sliding_Window_Unit/test_set_results_BRAM_plot_with_outliers.png', bbox_inches='tight')
 
 def plot_fclayer_target_processing_results():
-    general_model_file_name = "test_set_results_FCLayer_Total_BRAM_18K_general"
-    specialized_dw_0_model_file_name = "test_set_results_FCLayer_Total_BRAM_18K_specialized_dw_0"
-    specialized_dw_1_model_file_name = "test_set_results_FCLayer_Total_BRAM_18K_specialized_dw_1"
+    prep_none_file_name = "test_set_results_FCLayer_LUT_general_preprocessing_none"
+    prep_log_file_name = "test_set_results_FCLayer_LUT_general_preprocessing_log"
+    prep_diff_file_name = "test_set_results_FCLayer_LUT_general_preprocessing_diff"
 
-    general_model_folder_path = "../test_set_results/FCLayer/%s.csv" % general_model_file_name
-    specialized_dw_0_model_folder_path = "../test_set_results/FCLayer/%s.csv" % specialized_dw_0_model_file_name
-    specialized_dw_1_model_folder_path = "../test_set_results/FCLayer/%s.csv" % specialized_dw_1_model_file_name
+    prep_none_folder_path = "../test_set_results/FCLayer/%s.csv" % prep_none_file_name
+    prep_log_folder_path = "../test_set_results/FCLayer/%s.csv" % prep_log_file_name
+    prep_diff_folder_path = "../test_set_results/FCLayer/%s.csv" % prep_diff_file_name
 
-    df_general_model = pd.read_csv(general_model_folder_path)
-    df_specialized_dw_0_model = pd.read_csv(specialized_dw_0_model_folder_path)
-    df_specialized_dw_1_model = pd.read_csv(specialized_dw_1_model_folder_path)
+    df_prep_none = pd.read_csv(prep_none_folder_path)
+    df_prep_log = pd.read_csv(prep_log_folder_path)
+    df_prep_diff = pd.read_csv(prep_diff_folder_path)
 
     df_plot = pd.DataFrame()
-    df_plot['HLS GM'] = df_general_model['hls_rel_error']
-    df_plot['FINN GM'] = df_general_model['finn_rel_error']
-    df_plot['SVR GM'] = df_general_model['svr_rel_error']
+    #df_plot['HLS GM'] = df_prep_none['hls_rel_error']
+    #df_plot['FINN GM'] = df_prep_none['finn_rel_error']
+    df_plot['None'] = df_prep_none['svr_rel_error']
 
-    df_plot['HLS SM (dw=0)'] = df_specialized_dw_0_model['hls_rel_error']
-    df_plot['FINN SM (dw=0)'] = df_specialized_dw_0_model['finn_rel_error']
-    df_plot['SVR SM (dw=0)'] = df_specialized_dw_0_model['svr_rel_error']
+    #df_plot['HLS SM (dw=0)'] = df_prep_log['hls_rel_error']
+    #df_plot['FINN SM (dw=0)'] = df_prep_log['finn_rel_error']
+    df_plot['LOG'] = df_prep_log['svr_rel_error']
 
-    df_plot['HLS SM (dw=1)'] = df_specialized_dw_1_model['hls_rel_error']
-    df_plot['FINN SM (dw=1)'] = df_specialized_dw_1_model['finn_rel_error']
-    df_plot['SVR SM (dw=1)'] = df_specialized_dw_1_model['svr_rel_error']
+    #df_plot['HLS SM (dw=1)'] = df_prep_diff['hls_rel_error']
+    #df_plot['FINN SM (dw=1)'] = df_prep_diff['finn_rel_error']
+    df_plot['DIFF (SYNTH(ground truth) - FINN estimate)'] = df_prep_diff['svr_rel_error']
 
     fig = plt.figure(figsize=(20, 11))
-    boxplot = df_plot.boxplot(showmeans=True, showfliers=True, return_type='dict', color=dict(boxes='black', whiskers='black', medians='r', caps='black'), patch_artist=True)
+    boxplot = df_plot.boxplot(showmeans=True, showfliers=False, return_type='dict', color=dict(boxes='black', whiskers='black', medians='r', caps='black'), patch_artist=True)
     
-    colors = ['lightskyblue', 'lightgreen', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow', 'lightskyblue', 'lightgreen', 'lightyellow']
+    colors = ['lightyellow', 'lightyellow', 'lightyellow']
     
     for patch, color in zip(boxplot['means'], colors):
         patch.set_markeredgecolor('red')
@@ -368,18 +369,20 @@ def plot_fclayer_target_processing_results():
     for patch, color in zip(boxplot['boxes'], colors):
         patch.set_facecolor(color)
 
-    plt.xticks(rotation = 45)
-    plt.title('Sliding Window Unit - BRAM estimation model - Test Set Results')
+    #plt.xticks(rotation = 45)
+    plt.title('Comparison between different methods of preprocessing')
     plt.ylabel('Relative error [%] ')
-    fig.savefig('../test_set_results/Sliding_Window_Unit/test_set_results_BRAM_plot_with_outliers.png', bbox_inches='tight')
+    fig.savefig('../test_set_results/FCLayer/test_set_results_preprocessing.png', bbox_inches='tight')
 
-add_newest_finn_estimation_to_the_csv_file("test_set_results_FCLayer_Total_BRAM_18K_general_plus_fu")
-add_newest_finn_estimation_to_the_csv_file("test_set_results_FCLayer_Total_BRAM_18K_general_min_fu")
-add_newest_finn_estimation_to_the_csv_file("test_set_results_FCLayer_Total_BRAM_18K_specialized_min_fu")
+#add_newest_finn_estimation_to_the_csv_file("test_set_results_FCLayer_Total_BRAM_18K_general_plus_fu")
+#add_newest_finn_estimation_to_the_csv_file("test_set_results_FCLayer_Total_BRAM_18K_general_min_fu")
+#add_newest_finn_estimation_to_the_csv_file("test_set_results_FCLayer_Total_BRAM_18K_specialized_min_fu")
 
 #plot_fclayer_models_test_set_results_lut()
-plot_fclayer_models_test_set_results_bram()
+#plot_fclayer_models_test_set_results_bram()
 #plot_thresholding_models_test_set_results_lut()
 #plot_thresholding_models_test_set_results_bram()
 #plot_SWU_models_test_set_results_lut()
 #plot_SWU_models_test_set_results_bram()
+
+plot_fclayer_target_processing_results()

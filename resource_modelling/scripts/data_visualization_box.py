@@ -78,14 +78,14 @@ Y_relative_error_hls_swu = (abs(Y_swu_hls - Y_swu)/Y_swu_denominator) * 100
 Y_relative_error_estimate_swu = (abs(Y_swu_finn_estimate - Y_swu)/Y_swu_denominator) * 100
 
 df_rel_error = pd.DataFrame()
-df_rel_error["LUT FINN estimate FCLayer"] = pd.Series(Y_relative_error_estimate_fc)
-df_rel_error["LUT HLS FCLayer"] = pd.Series(Y_relative_error_hls_fc)
+df_rel_error["FCLayer FINN estimates"] = pd.Series(Y_relative_error_estimate_fc)
+df_rel_error["FCLayer HLS estimates"] = pd.Series(Y_relative_error_hls_fc)
 
-df_rel_error["LUT FINN estimate Thresholding"] = pd.Series(Y_relative_error_estimate_thresh)
-df_rel_error["LUT HLS Thresholding"] = pd.Series(Y_relative_error_hls_thresh)
+df_rel_error["Thresholding FINN estimates"] = pd.Series(Y_relative_error_estimate_thresh)
+df_rel_error["Thresholding HLS estimates"] = pd.Series(Y_relative_error_hls_thresh)
 
-df_rel_error["LUT FINN estimate SWU"] = pd.Series(Y_relative_error_estimate_swu)
-df_rel_error["LUT HLS SWU"] = pd.Series(Y_relative_error_hls_swu)
+df_rel_error["SWU FINN estimates"] = pd.Series(Y_relative_error_estimate_swu)
+df_rel_error["SWU HLS estimates"] = pd.Series(Y_relative_error_hls_swu)
 
 ###bram
 target = "Total_BRAM_18K"
@@ -118,15 +118,24 @@ df_rel_error_bram["BRAM_18K HLS SWU"] = pd.Series(Y_relative_error_hls_swu)
 
 #import pdb; pdb.set_trace()
 fig = plt.figure(figsize=(20, 11))
-boxplot = df_rel_error.boxplot(showfliers=False, patch_artist=True)
+boxplot = df_rel_error.boxplot(showmeans=True, showfliers=False, return_type='dict', color=dict(boxes='black', whiskers='black', medians='r', caps='black'), patch_artist=True)
 
-boxplot.set_title("Relative error of HLS and FINN analytical LUT  estimates for Fully Connected, Thresholding and Convolutional Layers")
-boxplot.set_ylabel('relative error [%]')
+colors = ['lightgreen', 'lightskyblue', 'lightgreen', 'lightskyblue', 'lightgreen', 'lightskyblue']
+
+for patch, color in zip(boxplot['means'], colors):
+    patch.set_markeredgecolor('red')
+    patch.set_markerfacecolor('red')
+    
+for patch, color in zip(boxplot['boxes'], colors):
+    patch.set_facecolor(color)
+
+plt.title("Relative error of HLS and FINN analytical LUT estimates for Fully Connected, Thresholding and Convolutional Layers")
+plt.ylabel('Relative Error [%]')
 fig.savefig('../graphs/%s/plot_box_luts_rel_error.png' % (directory_name), bbox_inches='tight')
 
 fig = plt.figure(figsize=(20, 11))
-boxplot = df_rel_error_bram.boxplot(showfliers=False, patch_artist=True)
+boxplot = df_rel_error_bram.boxplot(showmeans=True, showfliers=False, patch_artist=True)
 
-boxplot.set_title("Relative error of HLS and FINN analytical BRAM estimates for Fully Connected, Thresholding and Convolutional Layers")
-boxplot.set_ylabel('relative error [%]')
+plt.title("Relative error of HLS and FINN analytical BRAM estimates for Fully Connected, Thresholding and Convolutional Layers")
+plt.ylabel('Relative Error [%]')
 fig.savefig('../graphs/%s/plot_box_bram_rel_error_without_finn_fc.png' % (directory_name), bbox_inches='tight')
