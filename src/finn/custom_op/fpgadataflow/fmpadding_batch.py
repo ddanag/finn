@@ -1,10 +1,38 @@
-import os
+# Copyright (c) 2020, Xilinx
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+#
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+#
+# * Neither the name of FINN nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 import numpy as np
-from onnx import TensorProto, helper
-from finn.core.datatype import DataType
+import os
+import warnings
+from qonnx.core.datatype import DataType
+
 from finn.custom_op.fpgadataflow.hlscustomop import HLSCustomOp
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
-import warnings
 
 
 class FMPadding_Batch(HLSCustomOp):
@@ -19,10 +47,6 @@ class FMPadding_Batch(HLSCustomOp):
             # spatial size of input images
             "ImgDim": ("ints", True, []),  # [H, W] = [Y, X]
             # total padding (per dimension) to apply
-            # NOTE: Current padding scheme that is applied tries to pad the same
-            # amount of zeros in front and behind the image for each dimension.
-            # As an example, a padding scheme such as [1, x, 3, x] is equal
-            # to [2, x, 2, x]
             "Padding": (
                 "ints",
                 True,
@@ -34,10 +58,6 @@ class FMPadding_Batch(HLSCustomOp):
             "SIMD": ("i", False, 1),
             # FINN input datatype
             "inputDataType": ("s", True, ""),
-            # controls distribution of padded pixels
-            # in case of uneven padding -- see FMPadding fxn
-            # in hlslib
-            "PaddingStyle": ("i", False, 2, {2, 1}),
             # shape describing input vecs per execution
             "numInputVectors": ("i", False, 1),
         }
@@ -62,20 +82,20 @@ class FMPadding_Batch(HLSCustomOp):
         exp_cycles = (channels / simd) * batch_size * odim_h * odim_w
         return int(exp_cycles)
 
-    def get_normal_input_shape(self):
+    def get_normal_input_shape(self, ind=0):
         idim_h, idim_w = self.get_nodeattr("ImgDim")
         num_ch = self.get_nodeattr("NumChannels")
         ishape = (1, idim_h, idim_w, num_ch)
         return ishape
 
-    def get_normal_output_shape(self):
+    def get_normal_output_shape(self, ind=0):
         odim_h, odim_w = self.get_padded_odim()
         num_ch = self.get_nodeattr("NumChannels")
 
         oshape = (1, odim_h, odim_w, num_ch)
         return oshape
 
-    def get_folded_input_shape(self):
+    def get_folded_input_shape(self, ind=0):
         normal_ishape = list(self.get_normal_input_shape())
         ifm_ch = self.get_nodeattr("NumChannels")
         simd = self.get_nodeattr("SIMD")
@@ -84,7 +104,7 @@ class FMPadding_Batch(HLSCustomOp):
         folded_ishape = normal_ishape[:-1] + [fold, simd]
         return tuple(folded_ishape)
 
-    def get_folded_output_shape(self):
+    def get_folded_output_shape(self, ind=0):
         normal_oshape = list(self.get_normal_output_shape())
         ifm_ch = self.get_nodeattr("NumChannels")
         simd = self.get_nodeattr("SIMD")
@@ -98,19 +118,7 @@ class FMPadding_Batch(HLSCustomOp):
         oshape = self.get_normal_output_shape()
         ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
         assert ishape == exp_ishape, "Unexpect input shape for SameResize."
-        # implement tensor with correct shape
-        values = np.random.randn(*oshape).astype(np.float32)
-        return helper.make_node(
-            "Constant",
-            inputs=[],
-            outputs=[self.onnx_node.output[0]],
-            value=helper.make_tensor(
-                name="const_tensor",
-                data_type=TensorProto.FLOAT,
-                dims=values.shape,
-                vals=values.flatten().astype(float),
-            ),
-        )
+        return super().make_const_shape_op(oshape)
 
     def infer_node_datatype(self, model):
         node = self.onnx_node
@@ -128,7 +136,7 @@ class FMPadding_Batch(HLSCustomOp):
     def verify_node(self):
         pass
 
-    def get_input_datatype(self):
+    def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""
         ret = DataType[self.get_nodeattr("inputDataType")]
         # the hlslib op always pads with zeros, so ensure that the DataType
@@ -136,16 +144,16 @@ class FMPadding_Batch(HLSCustomOp):
         assert ret.allowed(0), "FMPadding_Batch DataType must support zero"
         return ret
 
-    def get_output_datatype(self):
+    def get_output_datatype(self, ind=0):
         """Returns FINN DataType of output. (Same as input datatype)"""
         return self.get_input_datatype()
 
-    def get_instream_width(self):
+    def get_instream_width(self, ind=0):
         ibits = self.get_input_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return ibits * simd
 
-    def get_outstream_width(self):
+    def get_outstream_width(self, ind=0):
         obits = self.get_output_datatype().bitwidth()
         simd = self.get_nodeattr("SIMD")
         return obits * simd
@@ -163,23 +171,21 @@ class FMPadding_Batch(HLSCustomOp):
         pad = self.get_nodeattr("Padding")
         pad_h = pad[0] + pad[2]
         pad_w = pad[1] + pad[3]
-        is_square = idim_h == idim_w
+        is_square_img = idim_h == idim_w
+        is_square_pad = pad_h == pad_w
 
-        if is_square:
-            assert (
-                pad_h == pad_w
-            ), "Only equal padding along the dimensions for square images is supported"
+        if is_square_img and is_square_pad:
             self.code_gen_dict["$DEFINES$"] = [
                 """#define ImgDim1 {}\n#define OutputDim1 {}\n
-                #define Padding1 {}\n#define NumChannels1 {}\n
-                #define SIMD1 {}\n#define PaddingStyle1 {}\n
+                #define PaddingBefore1 {}\n#define PaddingBehind1 {}\n
+                #define NumChannels1 {}\n#define SIMD1 {}\n
                 #define numReps {}\n""".format(
                     idim_h,
                     odim_h,
-                    pad_h,
+                    pad[0],
+                    pad[2],
                     self.get_nodeattr("NumChannels"),
                     self.get_nodeattr("SIMD"),
-                    self.get_nodeattr("PaddingStyle"),
                     self.get_nodeattr("numInputVectors"),
                 )
             ]
@@ -188,20 +194,22 @@ class FMPadding_Batch(HLSCustomOp):
                 """
                 #define OutputDim1_x {}\n
                 #define OutputDim1_y {}\n
-                #define Padding1_x {}\n
-                #define Padding1_y {}\n
+                #define PaddingLeft1 {}\n
+                #define PaddingRight1 {}\n
+                #define PaddingTop1 {}\n
+                #define PaddingBottom1 {}\n
                 #define NumChannels1 {}\n
                 #define SIMD1 {}\n
-                #define PaddingStyle1 {}\n
                 #define numReps {}\n
                 """.format(
                     odim_w,
                     odim_h,
-                    pad_w,
-                    pad_h,
+                    pad[1],
+                    pad[3],
+                    pad[0],
+                    pad[2],
                     self.get_nodeattr("NumChannels"),
                     self.get_nodeattr("SIMD"),
-                    self.get_nodeattr("PaddingStyle"),
                     self.get_nodeattr("numInputVectors"),
                 )
             ]
@@ -209,9 +217,9 @@ class FMPadding_Batch(HLSCustomOp):
     def read_npy_data(self):
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_input_datatype()
-        if dtype == DataType.BIPOLAR:
+        if dtype == DataType["BIPOLAR"]:
             # use binary for bipolar storage
-            dtype = DataType.BINARY
+            dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_instream_width()
         packed_hls_type = "ap_uint<%d>" % packed_bits
@@ -238,21 +246,26 @@ class FMPadding_Batch(HLSCustomOp):
         node = self.onnx_node
 
         idim_h, idim_w = self.get_nodeattr("ImgDim")
-        is_square = idim_h == idim_w
+        pad = self.get_nodeattr("Padding")
+        pad_h = pad[0] + pad[2]
+        pad_w = pad[1] + pad[3]
+        is_square_img = idim_h == idim_w
+        is_square_pad = pad_h == pad_w
 
-        if is_square:
+        if is_square_img and is_square_pad:
             hls_call = node.op_type
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                """{}<ImgDim1, OutputDim1, Padding1, NumChannels1,SIMD1,
-                {}, PaddingStyle1> (in0, out, numReps);""".format(
+                """{}<ImgDim1, OutputDim1, PaddingBefore1, PaddingBehind1, NumChannels1, SIMD1,
+                {}> (in0, out, numReps);""".format(
                     hls_call, in_t
                 )
             ]
         else:
             hls_call = "FMPadding_nonsquare_Batch"
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                """{}<OutputDim1_x, OutputDim1_y, Padding1_x, Padding1_y, NumChannels1,
-                SIMD1, {}, PaddingStyle1> (in0, out, numReps);""".format(
+                """{}<OutputDim1_x, OutputDim1_y, PaddingLeft1, PaddingRight1,
+                PaddingTop1, PaddingBottom1, NumChannels1,
+                SIMD1, {}> (in0, out, numReps);""".format(
                     hls_call, in_t
                 )
             ]
@@ -260,9 +273,9 @@ class FMPadding_Batch(HLSCustomOp):
     def dataoutstrm(self):
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
-        if dtype == DataType.BIPOLAR:
+        if dtype == DataType["BIPOLAR"]:
             # use binary for bipolar storage
-            dtype = DataType.BINARY
+            dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_outstream_width()
         packed_hls_type = "ap_uint<%d>" % packed_bits
@@ -296,8 +309,12 @@ class FMPadding_Batch(HLSCustomOp):
         ]
 
     def pragmas(self):
-        self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0"]
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out")
+        self.code_gen_dict["$PRAGMAS$"] = [
+            "#pragma HLS INTERFACE axis port=in0 name=in0_" + self.hls_sname()
+        ]
+        self.code_gen_dict["$PRAGMAS$"].append(
+            "#pragma HLS INTERFACE axis port=out name=out_" + self.hls_sname()
+        )
         self.code_gen_dict["$PRAGMAS$"].append(
             "#pragma HLS INTERFACE ap_ctrl_none port=return"
         )
@@ -308,7 +325,6 @@ class FMPadding_Batch(HLSCustomOp):
         exp_ishape = self.get_normal_input_shape()
         exp_oshape = self.get_normal_output_shape()
         folded_ishape = self.get_folded_input_shape()
-        folded_oshape = self.get_folded_output_shape()
 
         if mode == "cppsim":
             code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
@@ -339,9 +355,8 @@ class FMPadding_Batch(HLSCustomOp):
             # load output npy file
             super().npy_to_dynamic_output(context)
             assert (
-                context[node.output[0]].shape == folded_oshape
-            ), "cppsim did not produce expected folded output shape"
-            context[node.output[0]] = context[node.output[0]].reshape(*exp_oshape)
+                context[node.output[0]].shape == exp_oshape
+            ), "cppsim did not produce expected output shape"
         elif mode == "rtlsim":
             sim = self.get_rtlsim()
             nbits = self.get_instream_width()

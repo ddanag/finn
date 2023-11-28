@@ -1,10 +1,9 @@
 from onnx import TensorProto
 from onnx import helper as oh
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.base import Transformation
 
-from finn.custom_op.registry import getCustomOp
-from finn.transformation.base import Transformation
 from finn.util.fpgadataflow import is_fpgadataflow_node
-import warnings
 
 
 def _is_dwc_node(node):
@@ -46,25 +45,25 @@ class InsertDWC(Transformation):
             if _suitable_node(n):
                 for output_name in n.output:
                     consumers = model.find_consumers(output_name)
-                    if consumers is None:
+                    if consumers == []:
                         continue
-                    if len(consumers) > 1:
-                        warnings.warn(
-                            n.name
-                            + ": HLS node with fan-out higher than 1 cannot be stitched"
-                        )
-
+                    assert len(consumers) == 1, (
+                        n.name
+                        + ": HLS node with fan-out higher than 1 cannot be stitched"
+                    )
                     consumer = consumers[0]
                     if _suitable_node(consumer) is True:
                         n0 = getCustomOp(n)
                         n1 = getCustomOp(consumer)
                         n0_out_shape = n0.get_folded_output_shape()
-
-                        # If FC and external mem, it could be connected to input 1
+                        # in some special cases, we need to get folded shapes of
+                        # non-default inputs for the consumer
+                        # - if FC and external mem, it could be connected to input 1
+                        # - if concat, could be connected to any input
                         if (
-                            consumer.op_type == "StreamingFCLayer_Batch"
+                            consumer.op_type == "MatrixVectorActivation"
                             and n1.get_nodeattr("mem_mode") == "external"
-                        ):
+                        ) or (consumer.op_type == "StreamingConcat"):
                             # get input idx
                             in_idx = None
                             for idx, n_input in enumerate(consumer.input):
@@ -73,6 +72,7 @@ class InsertDWC(Transformation):
                             assert in_idx is not None, "Malformed model"
                             n1_in_shape = n1.get_folded_input_shape(in_idx)
                         else:
+                            # use default folded input shape
                             n1_in_shape = n1.get_folded_input_shape()
 
                         if n0_out_shape[-1] != n1_in_shape[-1]:
@@ -81,6 +81,15 @@ class InsertDWC(Transformation):
                             dwc_in_width = n0.get_outstream_width()
                             # determine dwc outwidth
                             dwc_out_width = n1.get_instream_width()
+                            larger_width = max(dwc_in_width, dwc_out_width)
+                            smaller_width = min(dwc_in_width, dwc_out_width)
+                            both_8bit_aligned = (larger_width % 8 == 0) and (
+                                smaller_width % 8 == 0
+                            )
+                            if both_8bit_aligned:
+                                impl_style = "vivado"
+                            else:
+                                impl_style = "hls"
 
                             # determine shape for dwc
                             dwc_shape = n0.get_normal_output_shape()
@@ -105,6 +114,7 @@ class InsertDWC(Transformation):
                                 inWidth=dwc_in_width,
                                 outWidth=dwc_out_width,
                                 dataType=str(dtype.name),
+                                impl_style=impl_style,
                             )
                             # insert dwc
                             graph.node.insert(node_ind + 1, dwc_node)

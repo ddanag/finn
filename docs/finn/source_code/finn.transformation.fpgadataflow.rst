@@ -62,6 +62,22 @@ finn.transformation.fpgadataflow.create\_stitched\_ip
    :undoc-members:
    :show-inheritance:
 
+finn.transformation.fpgadataflow.derive\_characteristic
+------------------------------------------------------------
+
+.. automodule:: finn.transformation.fpgadataflow.derive_characteristic
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+finn.transformation.fpgadataflow.externalize\_params
+------------------------------------------------------------
+
+.. automodule:: finn.transformation.fpgadataflow.externalize_params
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 finn.transformation.fpgadataflow.floorplan
 ----------------------------------------------------
 
@@ -94,6 +110,17 @@ finn.transformation.fpgadataflow.insert\_fifo
    :members:
    :undoc-members:
    :show-inheritance:
+
+
+finn.transformation.fpgadataflow.insert\_hook
+----------------------------------------------------
+
+.. automodule:: finn.transformation.fpgadataflow.insert_hook
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
 
 finn.transformation.fpgadataflow.insert\_iodma
 ----------------------------------------------------

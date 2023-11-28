@@ -1,17 +1,20 @@
 import pytest
 
 import numpy as np
+import qonnx.core.data_layout as DataLayout
 from onnx import TensorProto, helper
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.util.basic import qonnx_make_model
 
-from finn.core.modelwrapper import ModelWrapper
-import finn.core.data_layout as DataLayout
-from finn.transformation.infer_shapes import InferShapes
-from finn.transformation.infer_datatypes import InferDataTypes
-from finn.transformation.infer_data_layouts import InferDataLayouts
-from finn.transformation.general import GiveUniqueNodeNames, GiveReadableTensorNames
-from finn.transformation.streamline.absorb import AbsorbTransposeIntoFlatten
 import finn.core.onnx_exec as oxe
+from finn.transformation.streamline.absorb import AbsorbTransposeIntoFlatten
 
+
+@pytest.mark.streamline
 # permutation of transpose node
 @pytest.mark.parametrize("perm", [[0, 2, 3, 1], [0, 1, 3, 2], [3, 2, 0, 1]])
 # reshape or flatten
@@ -43,7 +46,7 @@ def test_absorb_transp_into_flatten(perm, shape, ishape, data_layout):
         outputs=[outp],
     )
 
-    model = helper.make_model(graph, producer_name="absorb_transpose_model")
+    model = qonnx_make_model(graph, producer_name="absorb_transpose_model")
     model = ModelWrapper(model)
     if shape is not None:
         model.graph.value_info.append(shape0)

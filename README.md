@@ -1,10 +1,10 @@
-## <img src=https://raw.githubusercontent.com/Xilinx/finn/master/docs/img/finn-logo.png width=128/> Fast, Scalable Quantized Neural Network Inference on FPGAs
+## <img src=https://raw.githubusercontent.com/Xilinx/finn/github-pages/docs/img/finn-logo.png width=128/> Fast, Scalable Quantized Neural Network Inference on FPGAs
 
 
 
-<img align="left" src="https://raw.githubusercontent.com/Xilinx/finn/master/docs/img/finn-stack.png" alt="drawing" style="margin-right: 20px" width="250"/>
+<img align="left" src="https://raw.githubusercontent.com/Xilinx/finn/github-pages/docs/img/finn-stack.png" alt="drawing" style="margin-right: 20px" width="250"/>
 
-[![Gitter](https://badges.gitter.im/xilinx-finn/community.svg)](https://gitter.im/xilinx-finn/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
+[![GitHub Discussions](https://img.shields.io/badge/discussions-join-green)](https://github.com/Xilinx/finn/discussions)
 [![ReadTheDocs](https://readthedocs.org/projects/finn/badge/?version=latest&style=plastic)](http://finn.readthedocs.io/)
 
 FINN is an experimental framework from Xilinx Research Labs to explore deep neural network
@@ -24,21 +24,20 @@ Please see the [Getting Started](https://finn.readthedocs.io/en/latest/getting_s
 
 ## What's New in FINN?
 
-* **2020-12-17:** v0.5b (beta) is released, with a new [examples repo](https://github.com/Xilinx/finn-examples) including MobileNet-v1. Read more on the <a href="https://xilinx.github.io/finn/2020/12/17/finn-v05b-beta-is-released.html">release blog post</a>.
-* **2020-09-21:** v0.4b (beta) is released. Read more on the <a href="https://xilinx.github.io/finn/2020/09/21/finn-v04b-beta-is-released.html">release blog post</a>.
-* **2020-05-08:** v0.3b (beta) is released, with initial support for convolutions, parallel transformations, more flexible memory allocation for MVAUs, throughput testing and many other smaller improvements and bugfixes. Read more on the <a href="https://xilinx.github.io/finn/2020/05/08/finn-v03b-beta-is-released.html">release blog post</a>.
-* **2020-04-15:** FINN v0.2.1b (beta): use fixed commit versions for dependency repos, otherwise identical to 0.2b
-* **2020-02-28:** FINN v0.2b (beta) is released, which is a clean-slate reimplementation of the framework. Currently only fully-connected networks are supported for the end-to-end flow. Please see the release blog post for a summary of the key features.
+* Please find all news under [GitHub discussions Announcements](https://github.com/Xilinx/finn/discussions/categories/announcements).
 
 ## Documentation
 
-You can view the documentation on [readthedocs](https://finn.readthedocs.io) or build them locally using `python setup.py doc` from inside the Docker container. Additionally, there is a series of [Jupyter notebook tutorials](https://github.com/Xilinx/finn/tree/master/notebooks), which we recommend running from inside Docker for a better experience.
+You can view the documentation on [readthedocs](https://finn.readthedocs.io) or build them locally using `python setup.py doc` from inside the Docker container. Additionally, there is a series of [Jupyter notebook tutorials](https://github.com/Xilinx/finn/tree/main/notebooks), which we recommend running from inside Docker for a better experience.
 
 ## Community
 
-We have a [gitter channel](https://gitter.im/xilinx-finn/community) where you can ask questions. You can use the GitHub issue tracker to report bugs, but please don't file issues to ask questions as this is better handled in the gitter channel.
+We have [GitHub discussions](https://github.com/Xilinx/finn/discussions) where you can ask questions. You can use the GitHub issue tracker to report bugs, but please don't file issues to ask questions as this is better handled in GitHub discussions.
 
-We also heartily welcome contributions to the project, please check out the [contribution guidelines](CONTRIBUTING.md) and the [list of open issues](https://github.com/Xilinx/finn/issues). Don't hesitate to get in touch over [Gitter](https://gitter.im/xilinx-finn/community) to discuss your ideas.
+We also heartily welcome contributions to the project, please check out the [contribution guidelines](CONTRIBUTING.md) and the [list of open issues](https://github.com/Xilinx/finn/issues). Don't hesitate to get in touch over [GitHub discussions](https://github.com/Xilinx/finn/discussions) to discuss your ideas.
+
+In the past, we also had a [Gitter channel](https://gitter.im/xilinx-finn/community). Please be aware that this is no longer maintained by us but can still be used to search for questions previous users had.
+
 
 ## Citation
 
@@ -68,4 +67,4 @@ The current implementation of the framework is based on the following publicatio
 ## Old version
 
 We previously released an early-stage prototype of a toolflow that took in Caffe-HWGQ binarized network descriptions and produced dataflow architectures. You can find it in the [v0.1](https://github.com/Xilinx/finn/tree/v0.1) branch in this repository.
-Please be aware that this version is deprecated and unsupported, and the master branch does not share history with that branch so it should be treated as a separate repository for all purposes.
+Please be aware that this version is deprecated and unsupported, and the main branch does not share history with that branch so it should be treated as a separate repository for all purposes.

@@ -27,30 +27,33 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import pytest
+
+import numpy as np
 import onnx.helper as oh
 from onnx import TensorProto
-import numpy as np
-
-from finn.core.modelwrapper import ModelWrapper
-from finn.core.datatype import DataType
-from finn.transformation.infer_shapes import InferShapes
-from finn.transformation.fpgadataflow.convert_to_hls_layers import (
-    InferConvInpGen,
-    InferVVAU,
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.general.im2col import compute_conv_output_dim
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.general import GiveUniqueNodeNames
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.util.basic import (
+    calculate_signed_dot_prod_range,
+    gen_finn_dt_tensor,
+    qonnx_make_model,
 )
-from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
-from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 
 import finn.core.onnx_exec as oxe
-from finn.custom_op.general.im2col import compute_conv_output_dim
-from finn.util.basic import calculate_signed_dot_prod_range, gen_finn_dt_tensor
-from finn.custom_op.registry import getCustomOp
-
-from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
+from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.convert_to_hls_layers import (
+    InferConvInpGen,
+    InferVectorVectorActivation,
+)
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
-from finn.transformation.general import GiveUniqueNodeNames
+from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
+from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
+from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 
 
 def set_up_reference_model(act, idt, wdt, k, ifm_dim, ifm_ch, stride, padding):
@@ -61,17 +64,17 @@ def set_up_reference_model(act, idt, wdt, k, ifm_dim, ifm_ch, stride, padding):
     ofm_dim = compute_conv_output_dim(ifm_dim, k, stride, total_pad=total_pad)
 
     if act is None:
-        odt = DataType.INT32
+        odt = DataType["INT32"]
     else:
         odt = act
         out_act = oh.make_tensor_value_info(
             "out_act", TensorProto.FLOAT, [1, ofm_dim, ofm_dim, ofm_ch]
         )
         T = oh.make_tensor_value_info("T", TensorProto.FLOAT, [ofm_ch, 15])
-        tdt = DataType.INT32
+        tdt = DataType["INT32"]
         thresh_node = oh.make_node(
             "MultiThreshold",
-            domain="finn.custom_op.general",
+            domain="qonnx.custom_op.general",
             inputs=["outp", "T"],
             outputs=["out_act"],
             data_layout="NHWC",
@@ -94,7 +97,7 @@ def set_up_reference_model(act, idt, wdt, k, ifm_dim, ifm_ch, stride, padding):
 
     im2col_node = oh.make_node(
         "Im2Col",
-        domain="finn.custom_op.general",
+        domain="qonnx.custom_op.general",
         inputs=["inp"],
         outputs=["im2col_out"],
         kernel_size=[k, k],
@@ -124,7 +127,7 @@ def set_up_reference_model(act, idt, wdt, k, ifm_dim, ifm_ch, stride, padding):
         outputs=[global_out],
         value_info=value_info,
     )
-    model = oh.make_model(graph, producer_name="lowered_dw_cnv-model")
+    model = qonnx_make_model(graph, producer_name="lowered_dw_cnv-model")
     model = ModelWrapper(model)
 
     # initialize model
@@ -134,7 +137,7 @@ def set_up_reference_model(act, idt, wdt, k, ifm_dim, ifm_ch, stride, padding):
 
     w_tensor = gen_finn_dt_tensor(wdt, [ofm_ch, 1, k, k])
     # create sparse matrix
-    W_matrix = np.zeros((ofm_ch, ifm_ch, k, k))
+    W_matrix = np.zeros((ofm_ch, ifm_ch, k, k), dtype=np.float32)
     for ch in range(ifm_ch):
         W_matrix[ch][ch] = w_tensor[ch][0]
     W_matrix = W_matrix.astype(np.float32)
@@ -162,17 +165,18 @@ def set_up_reference_model(act, idt, wdt, k, ifm_dim, ifm_ch, stride, padding):
 # PE
 @pytest.mark.parametrize("pe", [1, 2, 4])
 # Output activation
-@pytest.mark.parametrize("act", [None, DataType.UINT4])
+@pytest.mark.parametrize("act", [None, DataType["UINT4"]])
 # kernel size
 @pytest.mark.parametrize("k", [2, 4])
 # stride
 @pytest.mark.parametrize("stride", [1, 2])
 # padding
 @pytest.mark.parametrize("padding", [0, 1])
+@pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
 def test_depthwise_conv_hls_cppsim(act, pe, k, stride, padding):
-    idt = wdt = DataType.INT4
+    idt = wdt = DataType["INT4"]
     ifm_dim = 6
     ifm_ch = 4
 
@@ -183,7 +187,7 @@ def test_depthwise_conv_hls_cppsim(act, pe, k, stride, padding):
     input_dict = {"inp": input_tensor}
 
     new_model = model.transform(InferConvInpGen())
-    new_model = new_model.transform(InferVVAU())
+    new_model = new_model.transform(InferVectorVectorActivation())
 
     # set SIMD in ConvInputGen node and PE in VVAU node
 
@@ -191,7 +195,7 @@ def test_depthwise_conv_hls_cppsim(act, pe, k, stride, padding):
         if n.op_type == "ConvolutionInputGenerator":
             convinputgen_node = getCustomOp(n)
             convinputgen_node.set_nodeattr("SIMD", pe)
-        elif n.op_type == "Vector_Vector_Activate_Batch":
+        elif n.op_type == "VectorVectorActivation":
             vvau_node = getCustomOp(n)
             vvau_node.set_nodeattr("PE", pe)
     new_model = new_model.transform(SetExecMode("cppsim"))
@@ -204,17 +208,18 @@ def test_depthwise_conv_hls_cppsim(act, pe, k, stride, padding):
 # PE
 @pytest.mark.parametrize("pe", [1, 2, 4])
 # Output activation
-@pytest.mark.parametrize("act", [None, DataType.UINT4])
+@pytest.mark.parametrize("act", [None, DataType["UINT4"]])
 # kernel size
 @pytest.mark.parametrize("k", [2, 4])
 # stride
 @pytest.mark.parametrize("stride", [1, 2])
 # padding
 @pytest.mark.parametrize("padding", [0, 1])
+@pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
 def test_depthwise_conv_hls_rtlsim(act, pe, k, stride, padding):
-    idt = wdt = DataType.INT4
+    idt = wdt = DataType["INT4"]
     ifm_dim = 6
     ifm_ch = 4
 
@@ -225,7 +230,7 @@ def test_depthwise_conv_hls_rtlsim(act, pe, k, stride, padding):
     input_dict = {"inp": input_tensor}
 
     new_model = model.transform(InferConvInpGen())
-    new_model = new_model.transform(InferVVAU())
+    new_model = new_model.transform(InferVectorVectorActivation())
 
     # set SIMD in ConvInputGen node and PE in VVAU node
 
@@ -233,7 +238,7 @@ def test_depthwise_conv_hls_rtlsim(act, pe, k, stride, padding):
         if n.op_type == "ConvolutionInputGenerator":
             convinputgen_node = getCustomOp(n)
             convinputgen_node.set_nodeattr("SIMD", pe)
-        elif n.op_type == "Vector_Vector_Activate_Batch":
+        elif n.op_type == "VectorVectorActivation":
             vvau_node = getCustomOp(n)
             vvau_node.set_nodeattr("PE", pe)
 

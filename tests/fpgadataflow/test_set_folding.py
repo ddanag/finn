@@ -27,18 +27,20 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import pytest
+
 import numpy as np
 from onnx import TensorProto, helper
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.general import GiveUniqueNodeNames
+from qonnx.util.basic import qonnx_make_model
 
-from finn.custom_op.registry import getCustomOp
-from finn.core.datatype import DataType
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
-from finn.core.modelwrapper import ModelWrapper
-from finn.transformation.fpgadataflow.set_folding import SetFolding
-from finn.transformation.general import GiveUniqueNodeNames
 from finn.transformation.fpgadataflow.create_dataflow_partition import (
     CreateDataflowPartition,
 )
+from finn.transformation.fpgadataflow.set_folding import SetFolding
 from finn.util.test import load_test_checkpoint_or_skip
 
 
@@ -65,7 +67,7 @@ def make_multi_fclayer_model(ch, wdt, adt, tdt, nnodes):
         simd = 1
         FCLayer_nodes += [
             helper.make_node(
-                "StreamingFCLayer_Batch",
+                "MatrixVectorActivation",
                 [tensors[i].name, "weights_" + str(i), "thresh_" + str(i)],
                 [tensors[i + 1].name],
                 domain="finn.custom_op.fpgadataflow",
@@ -90,14 +92,15 @@ def make_multi_fclayer_model(ch, wdt, adt, tdt, nnodes):
         outputs=[tensors[-1]],
     )
 
-    model = helper.make_model(graph, producer_name="fclayer-model")
+    model = qonnx_make_model(graph, producer_name="fclayer-model")
     model = ModelWrapper(model)
 
     model.set_tensor_datatype("inp", adt)
     model.set_tensor_datatype("outp", adt)
 
     for i in range(1, nnodes + 1):
-        model.graph.value_info.append(tensors[i])
+        if tensors[i].name != "outp":
+            model.graph.value_info.append(tensors[i])
         model.set_initializer("weights_" + str(i - 1), W)
         model.set_initializer("thresh_" + str(i - 1), T)
         model.set_tensor_datatype("weights_" + str(i - 1), wdt)
@@ -107,13 +110,14 @@ def make_multi_fclayer_model(ch, wdt, adt, tdt, nnodes):
 
 
 # desired frames per second
-@pytest.mark.parametrize("target_fps", [30, 10 ** 5, 10 ** 7])
+@pytest.mark.parametrize("target_fps", [30, 10**5, 10**7])
 # target chip or board
 @pytest.mark.parametrize("platform", ["Pynq-Z1", "Ultra96", "U200"])
+@pytest.mark.fpgadataflow
 def test_set_folding(target_fps, platform):
 
     model = make_multi_fclayer_model(
-        128, DataType.INT4, DataType.INT2, DataType.INT16, 5
+        128, DataType["INT4"], DataType["INT2"], DataType["INT16"], 5
     )
 
     model = model.transform(GiveUniqueNodeNames())
@@ -124,7 +128,7 @@ def test_set_folding(target_fps, platform):
     dataflow_model = load_test_checkpoint_or_skip(dataflow_model_filename)
 
     clk_ns = 5
-    target_cycles_per_frame = int((10 ** 9 / clk_ns) / target_fps)
+    target_cycles_per_frame = int((10**9 / clk_ns) / target_fps)
     dataflow_model = dataflow_model.transform(SetFolding(target_cycles_per_frame))
 
     exp_cycles_dict = dataflow_model.analysis(exp_cycles_per_layer)

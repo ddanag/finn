@@ -26,19 +26,21 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
-
-from onnx import TensorProto, helper
 import pytest
-import finn.util.basic as util
-from finn.core.datatype import DataType
-from finn.core.modelwrapper import ModelWrapper
+
+import os
+from onnx import TensorProto, helper
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.util.basic import gen_finn_dt_tensor, get_by_name, qonnx_make_model
+
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 
 
+@pytest.mark.fpgadataflow
 @pytest.mark.vivado
 def test_code_gen_trafo():
-    idt = wdt = odt = DataType.BIPOLAR
+    idt = wdt = odt = DataType["BIPOLAR"]
     mw = 8
     mh = 8
     pe = 4
@@ -48,7 +50,7 @@ def test_code_gen_trafo():
     outp = helper.make_tensor_value_info("outp", TensorProto.FLOAT, [1, mh])
     node_inp_list = ["inp", "weights", "thresh"]
     FCLayer_node = helper.make_node(
-        "StreamingFCLayer_Batch",
+        "MatrixVectorActivation",
         node_inp_list,
         ["outp"],
         domain="finn.custom_op.fpgadataflow",
@@ -68,18 +70,18 @@ def test_code_gen_trafo():
         nodes=[FCLayer_node], name="fclayer_graph", inputs=[inp], outputs=[outp]
     )
 
-    model = helper.make_model(graph, producer_name="fclayer-model")
+    model = qonnx_make_model(graph, producer_name="fclayer-model")
     model = ModelWrapper(model)
 
     model.set_tensor_datatype("inp", idt)
     model.set_tensor_datatype("outp", odt)
     model.set_tensor_datatype("weights", wdt)
-    W = util.gen_finn_dt_tensor(wdt, (mw, mh))
+    W = gen_finn_dt_tensor(wdt, (mw, mh))
     model.set_initializer("weights", W)
 
     model = model.transform(PrepareCppSim())
     for node in model.graph.node:
-        code_gen_attribute = util.get_by_name(node.attribute, "code_gen_dir_cppsim")
+        code_gen_attribute = get_by_name(node.attribute, "code_gen_dir_cppsim")
         tmp_dir = code_gen_attribute.s.decode("UTF-8")
         assert os.path.isdir(
             tmp_dir

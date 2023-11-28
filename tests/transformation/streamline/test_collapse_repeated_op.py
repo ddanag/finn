@@ -26,17 +26,20 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import pytest
+
 import numpy as np
 import onnx.helper as oh
 from onnx import TensorProto
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.util.basic import qonnx_make_model
 
 import finn.core.onnx_exec as ox
-from finn.core.modelwrapper import ModelWrapper
-from finn.transformation.infer_shapes import InferShapes
 from finn.transformation.streamline import CollapseRepeatedAdd, CollapseRepeatedMul
-import pytest
 
 
+@pytest.mark.streamline
 def test_collapse_repeated_op():
     top_in = oh.make_tensor_value_info("top_in", TensorProto.FLOAT, [2])
     add_param_0 = oh.make_tensor_value_info("add_param_0", TensorProto.FLOAT, [2])
@@ -44,7 +47,7 @@ def test_collapse_repeated_op():
     add_param_1 = oh.make_tensor_value_info("add_param_1", TensorProto.FLOAT, [2])
     mul_param_1 = oh.make_tensor_value_info("mul_param_1", TensorProto.FLOAT, [2])
     top_out = oh.make_tensor_value_info("top_out", TensorProto.FLOAT, [2])
-    modelproto = oh.make_model(
+    modelproto = qonnx_make_model(
         oh.make_graph(
             name="test",
             inputs=[top_in],
@@ -73,8 +76,10 @@ def test_collapse_repeated_op():
     assert new_model.graph.node[1].op_type == "Mul"
 
 
+@pytest.mark.streamline
 @pytest.mark.parametrize(
-    "test_args", [("Add", CollapseRepeatedAdd()), ("Mul", CollapseRepeatedMul())],
+    "test_args",
+    [("Add", CollapseRepeatedAdd()), ("Mul", CollapseRepeatedMul())],
 )
 def test_collapse_repeated_only_if_linear(test_args):
     scalar_op = test_args[0]
@@ -92,7 +97,7 @@ def test_collapse_repeated_only_if_linear(test_args):
     value_info += [oh.make_tensor_value_info("p4", TensorProto.FLOAT, [1])]
     value_info += [oh.make_tensor_value_info("p5", TensorProto.FLOAT, [1])]
 
-    modelproto = oh.make_model(
+    modelproto = qonnx_make_model(
         oh.make_graph(
             name="test",
             inputs=[top_in],

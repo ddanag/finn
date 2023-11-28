@@ -26,30 +26,29 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from onnx import TensorProto, helper
-import numpy as np
 import pytest
 
-from finn.core.datatype import DataType
-from finn.transformation.infer_shapes import InferShapes
-from finn.transformation.infer_datatypes import InferDataTypes
-from finn.transformation.general import GiveUniqueNodeNames
-from finn.transformation.lower_convs_to_matmul import LowerConvsToMatMul
+import numpy as np
+from onnx import TensorProto, helper
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.general.im2col import compute_conv_output_dim
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.general import GiveUniqueNodeNames
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
+import finn.core.onnx_exec as oxe
+import finn.transformation.fpgadataflow.convert_to_hls_layers as to_hls
+from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
+from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
+from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
-from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
-import finn.core.onnx_exec as oxe
-from finn.core.modelwrapper import ModelWrapper
-from finn.util.basic import gen_finn_dt_tensor
-import finn.transformation.fpgadataflow.convert_to_hls_layers as to_hls
-
-from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
-from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.custom_op.general.im2col import compute_conv_output_dim
-from finn.custom_op.registry import getCustomOp
-from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 
 
 # conv_config:
@@ -67,13 +66,15 @@ from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
     ],
 )
 @pytest.mark.parametrize("depthwise", [False, True])
+@pytest.mark.parametrize("use_rtl_swg", [False, True])
 @pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim"])
+@pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
-def test_convert_to_hls_1d_conv_layer(conv_config, depthwise, exec_mode):
+def test_convert_to_hls_1d_conv_layer(conv_config, depthwise, use_rtl_swg, exec_mode):
     pad, kernel_size, stride, dilation = conv_config
     np.random.seed(0)
-    idt = DataType.UINT4
+    idt = DataType["UINT4"]
 
     in_feature_dim_h, in_feature_dim_w = [10, 1]
     in_chn = 16
@@ -83,6 +84,9 @@ def test_convert_to_hls_1d_conv_layer(conv_config, depthwise, exec_mode):
     dilation_h, dilation_w = dilation
     pad_h = pad[0] + pad[2]
     pad_w = pad[1] + pad[3]
+
+    if use_rtl_swg and exec_mode == "cppsim":
+        pytest.skip("cppsim not supported for RTL SWG")
 
     if depthwise is True:
         group = out_chn = in_chn
@@ -102,7 +106,7 @@ def test_convert_to_hls_1d_conv_layer(conv_config, depthwise, exec_mode):
     input_shape = [1, in_chn, in_feature_dim_h, in_feature_dim_w]
     output_shape = [1, out_chn, out_feature_dim_h, out_feature_dim_w]
 
-    conv_weight_dt = DataType.UINT4
+    conv_weight_dt = DataType["UINT4"]
 
     conv_config = {}
     conv_config["dilations"] = [dilation_h, dilation_w]
@@ -117,7 +121,7 @@ def test_convert_to_hls_1d_conv_layer(conv_config, depthwise, exec_mode):
         helper.make_tensor_value_info("p1", TensorProto.FLOAT, conv_param_shape)
     ]
 
-    modelproto = helper.make_model(
+    modelproto = qonnx_make_model(
         helper.make_graph(
             name="conv_test",
             inputs=[top_in],
@@ -139,12 +143,12 @@ def test_convert_to_hls_1d_conv_layer(conv_config, depthwise, exec_mode):
     model = model.transform(InferDataTypes())
 
     new_model = model.transform(LowerConvsToMatMul())
-    new_model = new_model.transform(to_hls.InferConvInpGen())
+    new_model = new_model.transform(to_hls.InferConvInpGen(use_rtl_variant=use_rtl_swg))
     if depthwise is True:
-        new_model = new_model.transform(to_hls.InferVVAU())
+        new_model = new_model.transform(to_hls.InferVectorVectorActivation())
     else:
-        new_model = new_model.transform(to_hls.InferQuantizedStreamingFCLayer())
-        fc_node = new_model.get_nodes_by_op_type("StreamingFCLayer_Batch")[0]
+        new_model = new_model.transform(to_hls.InferQuantizedMatrixVectorActivation())
+        fc_node = new_model.get_nodes_by_op_type("MatrixVectorActivation")[0]
         fc_inst = getCustomOp(fc_node)
         mw = fc_inst.get_nodeattr("MW")
         mh = fc_inst.get_nodeattr("MH")
@@ -180,7 +184,7 @@ def test_convert_to_hls_1d_conv_layer(conv_config, depthwise, exec_mode):
         assert padding_inst.get_nodeattr("SIMD") == in_chn
 
     if depthwise is True and exec_mode == "rtlsim":
-        node = new_model.get_nodes_by_op_type("Vector_Vector_Activate_Batch")[0]
+        node = new_model.get_nodes_by_op_type("VectorVectorActivation")[0]
         inst = getCustomOp(node)
         cycles_rtlsim = inst.get_nodeattr("cycles_rtlsim")
         exp_cycles_dict = new_model.analysis(exp_cycles_per_layer)

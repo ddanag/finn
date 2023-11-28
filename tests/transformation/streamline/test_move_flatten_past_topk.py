@@ -27,25 +27,27 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 import pytest
 
+import qonnx.core.data_layout as DataLayout
 from onnx import TensorProto, helper
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.transformation.insert_topk import InsertTopK
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
-from finn.core.modelwrapper import ModelWrapper
-from finn.core.datatype import DataType
-import finn.core.data_layout as DataLayout
-from finn.util.basic import gen_finn_dt_tensor
-from finn.transformation.insert_topk import InsertTopK
-from finn.transformation.infer_shapes import InferShapes
-from finn.transformation.infer_datatypes import InferDataTypes
-from finn.transformation.infer_data_layouts import InferDataLayouts
-from finn.transformation.general import GiveUniqueNodeNames, GiveReadableTensorNames
-from finn.transformation.streamline.reorder import MoveFlattenPastTopK
 import finn.core.onnx_exec as oxe
+from finn.transformation.streamline.reorder import MoveFlattenPastTopK
 
+
+@pytest.mark.streamline
 # data layout
 @pytest.mark.parametrize("data_layout", [DataLayout.NHWC, DataLayout.NCHW])
 # batch size
 @pytest.mark.parametrize("batch_size", [1, 2])
-def test_move_flatten_past_affine(data_layout, batch_size):
+def test_move_flatten_past_topk(data_layout, batch_size):
     if data_layout == DataLayout.NHWC:
         ishape = [batch_size, 1, 1, 1024]
         oshape = [batch_size, 1024]
@@ -59,13 +61,16 @@ def test_move_flatten_past_affine(data_layout, batch_size):
     flatten_node = helper.make_node("Flatten", ["inp"], ["outp"])
 
     graph = helper.make_graph(
-        nodes=[flatten_node], name="move-flatten-graph", inputs=[inp], outputs=[outp],
+        nodes=[flatten_node],
+        name="move-flatten-graph",
+        inputs=[inp],
+        outputs=[outp],
     )
 
-    model = helper.make_model(graph, producer_name="move_flatten_model")
+    model = qonnx_make_model(graph, producer_name="move_flatten_model")
     model = ModelWrapper(model)
 
-    model.set_tensor_datatype("inp", DataType.INT2)
+    model.set_tensor_datatype("inp", DataType["INT2"])
     model.set_tensor_layout("inp", data_layout)
     model = model.transform(InsertTopK())
     model = model.transform(InferShapes())
@@ -75,7 +80,7 @@ def test_move_flatten_past_affine(data_layout, batch_size):
     model = model.transform(GiveReadableTensorNames())
 
     # compare execution before and after transformation
-    inp_values = gen_finn_dt_tensor(DataType.INT2, ishape)
+    inp_values = gen_finn_dt_tensor(DataType["INT2"], ishape)
     idict = {model.graph.input[0].name: inp_values}
     model_transformed = model.transform(MoveFlattenPastTopK())
     assert oxe.compare_execution(model, model_transformed, idict)

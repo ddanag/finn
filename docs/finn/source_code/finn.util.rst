@@ -5,6 +5,66 @@ Util
 Utility Modules
 ===============
 
+qonnx.util.basic
+----------------------
+
+.. automodule:: qonnx.util.basic
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
+qonnx.util.cleanup
+----------------------
+
+.. automodule:: qonnx.util.cleanup
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
+qonnx.util.config
+--------------------
+
+.. automodule:: qonnx.util.config
+  :members:
+  :undoc-members:
+  :show-inheritance:
+
+qonnx.util.exec\_qonnx
+----------------------
+
+.. automodule:: qonnx.util.exec_qonnx
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+qonnx.util.inference\_cost
+--------------------------
+
+.. automodule:: qonnx.util.inference_cost
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+qonnx.util.onnx
+-------------------
+
+.. automodule:: qonnx.util.onnx
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
+qonnx.util.to\_channels\_last
+------------------------------
+
+.. automodule:: qonnx.util.to_channels_last
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
 finn.util.basic
 ----------------------
 
@@ -13,16 +73,8 @@ finn.util.basic
    :undoc-members:
    :show-inheritance:
 
-finn.util.config
-----------------
-
-.. automodule:: finn.util.config
-  :members:
-  :undoc-members:
-  :show-inheritance:
-
 finn.util.create
-----------------
+------------------
 
 .. automodule:: finn.util.create
   :members:
@@ -55,6 +107,15 @@ finn.util.gdrive
   :undoc-members:
   :show-inheritance:
 
+finn.util.hls
+---------------
+
+.. automodule:: finn.util.hls
+  :members:
+  :undoc-members:
+  :show-inheritance:
+
+
 finn.util.imagenet
 -----------------------------
 
@@ -63,14 +124,14 @@ finn.util.imagenet
   :undoc-members:
   :show-inheritance:
 
+finn.util.platforms
+--------------------
 
-finn.util.onnx
----------------------
-
-.. automodule:: finn.util.onnx
+.. automodule:: finn.util.platforms
    :members:
    :undoc-members:
    :show-inheritance:
+
 
 finn.util.pytorch
 ------------------

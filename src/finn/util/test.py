@@ -26,22 +26,25 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import pkg_resources as pk
+
+import pytest
+
+import numpy as np
 import onnx
 import onnx.numpy_helper as nph
-import pkg_resources as pk
-from pkgutil import get_data
-from brevitas_examples import bnn_pynq, imagenet_classification
-import numpy as np
-import pytest
-import warnings
-from finn.core.modelwrapper import ModelWrapper
 import os
-from finn.util.basic import pynq_part_map, alveo_part_map, alveo_default_platform
+import torchvision.transforms.functional as torchvision_util
+import warnings
+from brevitas_examples import bnn_pynq, imagenet_classification
+from pkgutil import get_data
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
+
+from finn.core.onnx_exec import execute_onnx
 from finn.transformation.fpgadataflow.make_zynq_proj import ZynqBuild
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild, VitisOptStrategy
-from finn.custom_op.registry import getCustomOp
-from finn.core.onnx_exec import execute_onnx
-import torchvision.transforms.functional as torchvision_util
+from finn.util.basic import alveo_default_platform, alveo_part_map, pynq_part_map
 
 # map of (wbits,abits) -> model
 example_map = {
@@ -88,8 +91,8 @@ def soft_verify_topk(invec, idxvec, k):
     """Check that the topK indices provided actually point to the topK largest
     values in the input vector"""
     np_topk = np.flip(invec.flatten().argsort())[:k]
-    soft_expected = invec.flatten()[np_topk.astype(np.int).flatten()]
-    soft_produced = invec.flatten()[idxvec.astype(np.int).flatten()]
+    soft_expected = invec.flatten()[np_topk.astype(np.int_).flatten()]
+    soft_produced = invec.flatten()[idxvec.astype(np.int_).flatten()]
     return (soft_expected == soft_produced).all()
 
 
@@ -141,7 +144,7 @@ def get_example_input(topology):
     "Get example numpy input tensor for given topology."
 
     if "fc" in topology:
-        raw_i = get_data("finn.data", "onnx/mnist-conv/test_data_set_0/input_0.pb")
+        raw_i = get_data("qonnx.data", "onnx/mnist-conv/test_data_set_0/input_0.pb")
         onnx_tensor = onnx.load_tensor_from_string(raw_i)
         return nph.to_array(onnx_tensor)
     elif topology == "cnv":
@@ -177,6 +180,7 @@ def execute_parent(parent_path, child_path, input_tensor_npy, return_full_ctx=Fa
     sdp_node = parent_model.get_nodes_by_op_type("StreamingDataflowPartition")[0]
     sdp_node = getCustomOp(sdp_node)
     sdp_node.set_nodeattr("model", child_path)
+    sdp_node.set_nodeattr("return_full_exec_context", 1 if return_full_ctx else 0)
     ret = execute_onnx(parent_model, {iname: input_tensor_npy}, True)
     if return_full_ctx:
         return ret

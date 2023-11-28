@@ -26,14 +26,22 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from typing import List, Optional, Any
-from finn.util.basic import pynq_part_map, alveo_part_map
-from finn.transformation.fpgadataflow.vitis_build import VitisOptStrategy
-from enum import Enum
+import numpy as np
+import os
 from dataclasses import dataclass
 from dataclasses_json import dataclass_json
-import os
-import numpy as np
+from enum import Enum
+from typing import Any, List, Optional
+
+from finn.transformation.fpgadataflow.vitis_build import VitisOptStrategy
+from finn.util.basic import alveo_default_platform, alveo_part_map, pynq_part_map
+
+
+class AutoFIFOSizingMethod(str, Enum):
+    "Select the type of automatic FIFO sizing strategy."
+
+    CHARACTERIZE = "characterize"
+    LARGEFIFO_RTLSIM = "largefifo_rtlsim"
 
 
 class ShellFlowType(str, Enum):
@@ -58,7 +66,7 @@ class DataflowOutputType(str, Enum):
 
 class ComputeEngineMemMode(str, Enum):
     """Memory mode for generated compute engines. See
-    https://finn.readthedocs.io/en/latest/internals.html#streamingfclayer-mem-mode
+    https://finn.readthedocs.io/en/latest/internals.html#matrixvectoractivation-mem-mode
     for more information."""
 
     CONST = "const"
@@ -88,6 +96,8 @@ class LargeFIFOMemStyle(str, Enum):
 class VerificationStepType(str, Enum):
     "Steps at which FINN ONNX execution can be launched for verification."
 
+    #: verify after step_qonnx_to_finn, using Python execution
+    QONNX_TO_FINN_PYTHON = "finn_onnx_python"
     #: verify after step_tidy_up, using Python execution
     TIDY_UP_PYTHON = "initial_python"
     #: verify after step_streamline , using Python execution
@@ -102,6 +112,7 @@ class VerificationStepType(str, Enum):
 #: specified order. Use the `steps` as part of build config to restrict which
 #: steps will be run.
 default_build_dataflow_steps = [
+    "step_qonnx_to_finn",
     "step_tidy_up",
     "step_streamline",
     "step_convert_to_hls",
@@ -122,6 +133,7 @@ default_build_dataflow_steps = [
 
 #: List of steps to run for an estimate-only (no synthesis) dataflow build
 estimate_only_dataflow_steps = [
+    "step_qonnx_to_finn",
     "step_tidy_up",
     "step_streamline",
     "step_convert_to_hls",
@@ -161,7 +173,7 @@ class DataflowBuildConfig:
     #: If the parallelization attributes (PE, SIMD) are part of the config,
     #: this will override the automatically generated parallelization
     #: attributes inferred from target_fps (if any)
-    #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
+    #: Will be applied with :py:mod:`qonnx.transformation.general.ApplyConfig`
     folding_config_file: Optional[str] = None
 
     #: (Optional) Target inference performance in frames per second.
@@ -170,6 +182,13 @@ class DataflowBuildConfig:
     #: If parallelization attributes are specified as part of folding_config_file
     #: that will override the target_fps setting here.
     target_fps: Optional[int] = None
+
+    #: (Optional) Use two-pass relaxation for folding, only relevant if target_fps
+    #: is set. If enabled, parallelization will internally run a second time if the
+    #: target cycles from the first pass could not be achieved, instead using the
+    #: achievable target to obtain a balanced pipeline. If disabled, this can be
+    #: useful for decreasing the latency (even though throughput won't increase).
+    folding_two_pass_relaxation: Optional[bool] = True
 
     #: (Optional) At which steps the generated intermediate output model
     #: will be verified. See documentation of VerificationStepType for
@@ -184,6 +203,23 @@ class DataflowBuildConfig:
     #: verification. Only required if verify_steps is not empty.
     verify_expected_output_npy: Optional[str] = "expected_output.npy"
 
+    #: (Optional) Save full execution context for each of the verify_steps.
+    #: By default, only the top-level graph output is saved.
+    verify_save_full_context: Optional[bool] = False
+
+    #: (Optional) Save .vcd waveforms from rtlsim under reports.
+    #: By default, waveforms won't be saved.
+    verify_save_rtlsim_waveforms: Optional[bool] = False
+
+    #: (Optional) Run synthesis to generate a .dcp for the stitched-IP output product.
+    #: This can make it easier to treat it as a standalone artifact without requiring
+    #: the full list of layer IP build directories. By default, synthesis will not run.
+    stitched_ip_gen_dcp: Optional[bool] = False
+
+    #: Insert a signature node to the stitched-IP to read/write information
+    #: to the design: e.g. Customer signature, application signature, version
+    signature: Optional[List[int]] = None
+
     #: (Optional) Control the maximum width of the per-PE MVAU stream while
     #: exploring the parallelization attributes to reach target_fps
     #: Only relevant if target_fps is specified.
@@ -193,8 +229,8 @@ class DataflowBuildConfig:
 
     #: (Optional) Whether thresholding layers (which implement quantized
     #: activations in FINN) will be implemented as stand-alone HLS layers,
-    #: instead of being part of StreamingFCLayer. This gives larger flexibility,
-    #: and makes it possible to have runtime-writable thresholds.
+    #: instead of being part of MatrixVectorActivation layer. This gives larger
+    #: flexibility, and makes it possible to have runtime-writable thresholds.
     standalone_thresholds: Optional[bool] = False
 
     #: Target board, only needed for generating full bitfiles where the FINN
@@ -217,6 +253,20 @@ class DataflowBuildConfig:
     #: for each FIFO.
     auto_fifo_depths: Optional[bool] = True
 
+    #: Whether FIFO nodes with depth larger than 32768 will be split.
+    #: Allow to configure very large FIFOs in the folding_config_file.
+    split_large_fifos: Optional[bool] = False
+
+    #: When `auto_fifo_depths = True`, select which method will be used for
+    #: setting the FIFO sizes.
+    auto_fifo_strategy: Optional[
+        AutoFIFOSizingMethod
+    ] = AutoFIFOSizingMethod.LARGEFIFO_RTLSIM
+
+    #: Avoid using C++ rtlsim for auto FIFO sizing and rtlsim throughput test
+    #: if set to True, always using Python instead
+    force_python_rtlsim: Optional[bool] = False
+
     #: Memory resource type for large FIFOs
     #: Only relevant when `auto_fifo_depths = True`
     large_fifo_mem_style: Optional[LargeFIFOMemStyle] = LargeFIFOMemStyle.AUTO
@@ -229,14 +279,20 @@ class DataflowBuildConfig:
     #: Which memory mode will be used for compute layers
     default_mem_mode: Optional[ComputeEngineMemMode] = ComputeEngineMemMode.DECOUPLED
 
+    #: Force inference of RTL ConvolutionInputGenerator over HLS implementation
+    #: If set to False, falls back to the default behavior of InferConvInpGen()
+    force_rtl_conv_inp_gen: Optional[bool] = False
+
     #: Which Vitis platform will be used.
     #: Only relevant when `shell_flow_type = ShellFlowType.VITIS_ALVEO`
     #: e.g. "xilinx_u250_xdma_201830_2"
+    #: If not specified but "board" is specified, will use the FINN
+    #: default (if any) for that Alveo board
     vitis_platform: Optional[str] = None
 
     #: Path to JSON config file assigning each layer to an SLR.
     #: Only relevant when `shell_flow_type = ShellFlowType.VITIS_ALVEO`
-    #: Will be applied with :py:mod:`finn.transformation.general.ApplyConfig`
+    #: Will be applied with :py:mod:`qonnx.transformation.general.ApplyConfig`
     vitis_floorplan_file: Optional[str] = None
 
     #: Vitis optimization strategy
@@ -254,6 +310,10 @@ class DataflowBuildConfig:
     #: Whether pdb postmortem debuggig will be launched when the build fails
     enable_build_pdb_debug: Optional[bool] = True
 
+    #: When True, all warnings and compiler output will be printed in stdout.
+    #: Otherwise, these will be suppressed and only appear in the build log.
+    verbose: Optional[bool] = False
+
     #: If given, only run the steps in the list. If not, run default steps.
     #: See `default_build_dataflow_steps` for the default list of steps.
     #: When specified:
@@ -262,6 +322,28 @@ class DataflowBuildConfig:
     #: - strings are resolved to functions from the default list
     #: - functions are called with (model, DataflowBuildConfig) as args
     steps: Optional[List[Any]] = None
+
+    #: If given, start from this step, loading the intermediate model generated
+    #: from the previous step (save_intermediate_models must be enabled)
+    start_step: Optional[str] = None
+
+    #: If given, stop at this step.
+    stop_step: Optional[str] = None
+
+    #: The optional argument `max_multithreshold_bit_width` affects which Quant nodes
+    #: of the QONNX format get converted to the MultiThreshold nodes of FINN. This
+    #: only affects Quant nodes in the activation path. Quant nodes, which define a
+    #: bit width larger than `max_multithreshold_bit_width` are not converted to
+    #: MultiThreshold nodes and a warning is raised instead.
+    #: If not given `max_multithreshold_bit_width` defaults to 8.
+    max_multithreshold_bit_width: Optional[int] = 8
+
+    #: Override the number of inputs for rtlsim performance measurement.
+    rtlsim_batch_size: Optional[int] = 1
+
+    #: If set to True, FIFOs and DWCs with impl_style=vivado will be kept during
+    #: rtlsim, otherwise they will be replaced by HLS implementations.
+    rtlsim_use_vivado_comps: Optional[bool] = True
 
     def _resolve_hls_clk_period(self):
         if self.hls_clk_period_ns is None:
@@ -297,7 +379,7 @@ class DataflowBuildConfig:
         if self.target_fps is None:
             return None
         else:
-            n_clock_cycles_per_sec = 10 ** 9 / self.synth_clk_period_ns
+            n_clock_cycles_per_sec = 10**9 / self.synth_clk_period_ns
             n_cycles_per_frame = n_clock_cycles_per_sec / self.target_fps
             return int(n_cycles_per_frame)
 
@@ -312,6 +394,17 @@ class DataflowBuildConfig:
             VitisOptStrategyCfg.BUILD_SPEED: VitisOptStrategy.BUILD_SPEED,
         }
         return name_to_strategy[self.vitis_opt_strategy]
+
+    def _resolve_vitis_platform(self):
+        if self.vitis_platform is not None:
+            return self.vitis_platform
+        elif (self.vitis_platform is None) and (self.board is not None):
+            return alveo_default_platform[self.board]
+        else:
+            raise Exception(
+                "Could not resolve Vitis platform:"
+                " need either board or vitis_platform specified"
+            )
 
     def _resolve_verification_steps(self):
         if self.verify_steps is None:
@@ -332,4 +425,7 @@ class DataflowBuildConfig:
                 + self.verify_expected_output_npy
             )
             verify_expected_output_npy = np.load(self.verify_expected_output_npy)
-            return (verify_input_npy, verify_expected_output_npy)
+            return (
+                verify_input_npy,
+                verify_expected_output_npy,
+            )

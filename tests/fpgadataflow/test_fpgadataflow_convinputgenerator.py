@@ -27,24 +27,23 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import pytest
-import numpy as np
 
+import numpy as np
 from onnx import TensorProto, helper
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.general import GiveUniqueNodeNames
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-from finn.core.datatype import DataType
-from finn.core.modelwrapper import ModelWrapper
-from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
-from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
+from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
-from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
+from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
+from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
-from finn.transformation.general import GiveUniqueNodeNames
-from finn.util.basic import gen_finn_dt_tensor
-
-from finn.custom_op.registry import getCustomOp
-from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
+from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 
 
 def make_single_im2col_modelwrapper(
@@ -62,7 +61,7 @@ def make_single_im2col_modelwrapper(
         "Im2Col",
         ["inp"],
         ["outp"],
-        domain="finn.custom_op.general",
+        domain="qonnx.custom_op.general",
         stride=[stride, stride],
         kernel_size=[k, k],
         input_shape=str((1, ifm_dim, ifm_dim, ifm_ch)),
@@ -74,7 +73,7 @@ def make_single_im2col_modelwrapper(
         nodes=[im2col_node], name="im2col_graph", inputs=[inp], outputs=[outp]
     )
 
-    model = helper.make_model(graph, producer_name="im2col-model")
+    model = qonnx_make_model(graph, producer_name="im2col-model")
     model = ModelWrapper(model)
 
     model.set_tensor_datatype("inp", idt)
@@ -118,7 +117,7 @@ def make_single_slidingwindow_modelwrapper(
         outputs=[outp],
     )
 
-    model = helper.make_model(graph, producer_name="slidingwindow-model")
+    model = qonnx_make_model(graph, producer_name="slidingwindow-model")
     model = ModelWrapper(model)
 
     model.set_tensor_datatype("inp", idt)
@@ -132,7 +131,7 @@ def prepare_inputs(input_tensor):
 
 
 # input datatype
-@pytest.mark.parametrize("idt", [DataType.BIPOLAR, DataType.INT2])
+@pytest.mark.parametrize("idt", [DataType["BIPOLAR"], DataType["INT2"]])
 # kernel size
 @pytest.mark.parametrize("k", [2, 3])
 # input dimension
@@ -150,6 +149,7 @@ def prepare_inputs(input_tensor):
 @pytest.mark.parametrize("simd", [1, 2])
 # depthwise
 @pytest.mark.parametrize("dw", [0, 1])
+@pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
 def test_fpgadataflow_slidingwindow(

@@ -29,11 +29,11 @@
 import os
 import subprocess
 from distutils.dir_util import copy_tree
+from qonnx.transformation.base import Transformation
 from shutil import copy
 
-from finn.transformation.base import Transformation
-from finn.util.basic import make_build_dir
 import finn.transformation.fpgadataflow.templates as templates
+from finn.util.basic import make_build_dir
 
 
 class DeployToPYNQ(Transformation):

@@ -103,8 +103,8 @@ create_project finn_zynq_link ./ -part $FPGA_PART
 # set board part repo paths to find PYNQ-Z1/Z2
 set paths_prop [get_property BOARD_PART_REPO_PATHS [current_project]]
 set paths_param [get_param board.repoPaths]
-lappend paths_prop /workspace/finn/board_files
-lappend paths_param /workspace/finn/board_files
+lappend paths_prop $::env(FINN_ROOT)/deps/board_files
+lappend paths_param $::env(FINN_ROOT)/deps/board_files
 set_property BOARD_PART_REPO_PATHS $paths_prop [current_project]
 set_param board.repoPaths $paths_param
 
@@ -114,26 +114,34 @@ if {$BOARD == "ZCU104"} {
 } elseif {$BOARD == "ZCU102"} {
     set_property board_part xilinx.com:zcu102:part0:3.3 [current_project]
     set ZYNQ_TYPE "zynq_us+"
+} elseif {$BOARD == "RFSoC2x2"} {
+    set_property board_part xilinx.com:rfsoc2x2:part0:1.1 [current_project]
+    set ZYNQ_TYPE "zynq_us+"
 } elseif {$BOARD == "Ultra96"} {
-    set_property board_part em.avnet.com:ultra96v1:part0:1.2 [current_project]
+    set_property board_part avnet.com:ultra96v1:part0:1.2 [current_project]
     set ZYNQ_TYPE "zynq_us+"
 } elseif {$BOARD == "Pynq-Z2"} {
     set ZYNQ_TYPE "zynq_7000"
+    set_property board_part tul.com.tw:pynq-z2:part0:1.0 [current_project]
 } elseif {$BOARD == "Pynq-Z1"} {
     set ZYNQ_TYPE "zynq_7000"
     set_property board_part www.digilentinc.com:pynq-z1:part0:1.0 [current_project]
+} elseif {$BOARD == "KV260_SOM"} {
+    set ZYNQ_TYPE "zynq_us+"
+    set_property board_part xilinx.com:kv260_som:part0:1.3 [current_project]
 } else {
     puts "Unrecognized board"
 }
 
 create_bd_design "top"
 if {$ZYNQ_TYPE == "zynq_us+"} {
-    create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e:3.3 zynq_ps
+    create_bd_cell -type ip -vlnv xilinx.com:ip:zynq_ultra_ps_e:3.4 zynq_ps
     apply_bd_automation -rule xilinx.com:bd_rule:zynq_ultra_ps_e -config {apply_board_preset "1" }  [get_bd_cells zynq_ps]
     #activate one slave port, deactivate the second master port
     set_property -dict [list CONFIG.PSU__USE__S_AXI_GP2 {1}] [get_bd_cells zynq_ps]
     set_property -dict [list CONFIG.PSU__USE__M_AXI_GP1 {0}] [get_bd_cells zynq_ps]
     #set frequency of PS clock (this can't always be exactly met)
+    set_property -dict [list CONFIG.PSU__OVERRIDE__BASIC_CLOCK {0}] [get_bd_cells zynq_ps]
     set_property -dict [list CONFIG.PSU__CRL_APB__PL0_REF_CTRL__FREQMHZ [expr int($FREQ_MHZ)]] [get_bd_cells zynq_ps]
 } elseif {$ZYNQ_TYPE == "zynq_7000"} {
     create_bd_cell -type ip -vlnv xilinx.com:ip:processing_system7:5.5 zynq_ps
@@ -180,7 +188,7 @@ proc assign_axi_addr_proc {axi_intf_path} {
     #align base address to range
     set offset [expr ($axi_peripheral_base + ($range-1)) & ~($range-1)]
     #perform assignment
-    assign_bd_address [get_bd_addr_segs $axi_intf_path/Reg] -offset $offset -range $range
+    assign_bd_address [get_bd_addr_segs $axi_intf_path/Reg*] -offset $offset -range $range
     #advance base address
     set axi_peripheral_base [expr $offset + $range]
 }

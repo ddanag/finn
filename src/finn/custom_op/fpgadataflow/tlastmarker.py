@@ -198,8 +198,12 @@ class TLastMarker(HLSCustomOp):
             ]
 
     def pragmas(self):
-        self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0"]
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out")
+        self.code_gen_dict["$PRAGMAS$"] = [
+            "#pragma HLS INTERFACE axis port=in0 name=in0_" + self.hls_sname()
+        ]
+        self.code_gen_dict["$PRAGMAS$"].append(
+            "#pragma HLS INTERFACE axis port=out name=out_" + self.hls_sname()
+        )
 
         dyn_iters = self.get_nodeattr("DynIters")
         if dyn_iters == 1:
@@ -214,21 +218,21 @@ class TLastMarker(HLSCustomOp):
     def get_number_output_values(self):
         return self.get_nodeattr("NumIters")
 
-    def get_folded_input_shape(self):
+    def get_folded_input_shape(self, ind=0):
         stream_width = self.get_nodeattr("StreamWidth")
         elem_width = self.get_nodeattr("ElemWidth")
         n_packed_elems = stream_width // elem_width
         n_iters = self.get_nodeattr("NumIters")
         return (1, n_iters, n_packed_elems)
 
-    def get_folded_output_shape(self):
+    def get_folded_output_shape(self, ind=0):
         return self.get_folded_input_shape()
 
-    def get_instream_width(self):
+    def get_instream_width(self, ind=0):
         stream_width = self.get_nodeattr("StreamWidth")
         return stream_width
 
-    def get_outstream_width(self):
+    def get_outstream_width(self, ind=0):
         stream_width = self.get_nodeattr("StreamWidth")
         return stream_width
 
@@ -244,12 +248,9 @@ class TLastMarker(HLSCustomOp):
     def get_verilog_top_module_intf_names(self):
         intf_names = super().get_verilog_top_module_intf_names()
         stream_width = self.get_nodeattr("StreamWidth")
-        if self.get_nodeattr("Direction") == "in":
-            intf_names["s_axis"] = [("in0", stream_width)]
-            intf_names["m_axis"] = [("out_V_V", stream_width)]
-        else:
-            intf_names["s_axis"] = [("in0_V_V", stream_width)]
-            intf_names["m_axis"] = [("out_r", stream_width)]
+        sname = self.hls_sname()
+        intf_names["s_axis"] = [("in0_" + sname, stream_width)]
+        intf_names["m_axis"] = [("out_" + sname, stream_width)]
         if self.get_nodeattr("DynIters") == 1:
             intf_names["axilite"] = ["s_axi_control"]
         return intf_names

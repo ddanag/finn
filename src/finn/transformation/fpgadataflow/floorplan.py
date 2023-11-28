@@ -26,14 +26,15 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from finn.custom_op.registry import getCustomOp
-from finn.transformation.base import Transformation
-from finn.util.basic import get_by_name
+import json
+import warnings
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.base import Transformation
+from qonnx.transformation.general import ApplyConfig
+from qonnx.util.basic import get_by_name
+
 from finn.analysis.fpgadataflow.floorplan_params import floorplan_params
 from finn.util.basic import make_build_dir
-from finn.transformation.general import ApplyConfig
-import warnings
-import json
 
 
 class Floorplan(Transformation):
@@ -70,7 +71,7 @@ class Floorplan(Transformation):
 
         try:
             default_slr = self.user_floorplan["Defaults"]["slr"][0]
-        except:
+        except Exception:
             default_slr = -1
 
         # perform DWC and FIFO specific adjustments
@@ -107,7 +108,8 @@ class Floorplan(Transformation):
             warnings.warn(
                 str(unassigned_nodes)
                 + " nodes have no entry in the provided floorplan,"
-                + " SLR was set to " + str(default_slr)
+                + " SLR was set to "
+                + str(default_slr)
             )
 
         # partition id generation
@@ -149,8 +151,9 @@ class Floorplan(Transformation):
                 node_inst.set_nodeattr("partition_id", partition_cnt)
                 partition_cnt += 1
                 continue
+
             elif not (
-                node.op_type == "StreamingFCLayer_Batch"
+                node.op_type == "MatrixVectorActivation"
                 and node_inst.get_nodeattr("mem_mode") is not None
                 and node_inst.get_nodeattr("mem_mode") == "external"
             ):
@@ -163,9 +166,17 @@ class Floorplan(Transformation):
                 pre_inst = getCustomOp(pre_node)
                 pre_slr = pre_inst.get_nodeattr("slr")
                 if node_slr == pre_slr:
-                    partition_id = pre_inst.get_nodeattr("partition_id")
-                    node_inst.set_nodeattr("partition_id", partition_id)
-                    break
+                    axilite_intf_name = pre_inst.get_verilog_top_module_intf_names()[
+                        "axilite"
+                    ]
+                    if len(axilite_intf_name) != 0:
+                        node_inst.set_nodeattr("partition_id", partition_cnt)
+                        partition_cnt += 1
+                    else:
+                        partition_id = pre_inst.get_nodeattr("partition_id")
+                        node_inst.set_nodeattr("partition_id", partition_id)
+                break
+
             else:
                 # no matching, new partition
                 node_inst.set_nodeattr("partition_id", partition_cnt)

@@ -26,9 +26,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from vcdvcd import VCDVCD
-from finn.util.basic import get_num_default_workers
 import multiprocessing as mp
+from qonnx.util.basic import get_num_default_workers
+from vcdvcd import VCDVCD
 
 # string patterns to search for to find particular interfaces
 # streaming interfaces
@@ -101,19 +101,21 @@ def get_stream_if_stats(vcd_file, if_base_name):
     <stream_state>: (<num_samples>, <fraction_of_time>),
 
     where <stream_state> is the combination of (V)alid/(R)eady values,
-    <num_samples> is the approximate number of rising clock edges spent in <state>
-    , and <fraction_of_time> is the fraction of <num_samples> to total
+    <num_samples> is the approximate number of rising clock edges spent in <state>,
+    and <fraction_of_time> is the fraction of <num_samples> to total
     amount of time recorded by the trace.
 
     Example:
-    {"{'V': 0, 'R': 0}": (5, 0.0006060606060606061),
-     "{'V': 1, 'R': 0}": (0, 0.0),
-     "{'V': 0, 'R': 1}": (7605, 0.9218181818181819),
-     "{'V': 1, 'R': 1}": (640, 0.07757575757575758)}
-
+    {
+    "{'V': 0, 'R': 0}": (5, 0.0006060606060606061),
+    "{'V': 1, 'R': 0}": (0, 0.0),
+    "{'V': 0, 'R': 1}": (7605, 0.9218181818181819),
+    "{'V': 1, 'R': 1}": (640, 0.07757575757575758)
+    }
     Here we can see the stream was transmitting values 7.7% of the time,
     and 9.2% of the time there was no incoming data (valid 0, ready 1)
     """
+
     if_valid = if_base_name + vname
     if_ready = if_base_name + rname
     v = VCDVCD(vcd_file, signals=[if_valid], store_tvs=True)
@@ -162,7 +164,9 @@ def _get_stats(x):
     return (x[0], get_stream_if_stats(x[1], x[0]))
 
 
-def get_all_stream_if_stats(vcd_file, stream_ifs=None, sort_by="{'V': 1, 'R': 0}", num_workers=None):
+def get_all_stream_if_stats(
+    vcd_file, stream_ifs=None, sort_by="{'V': 1, 'R': 0}", num_workers=None
+):
     """Return a list of streaming interface stats, sorted by the percentage
     for the given sort_by key. If stream_ifs is None, all streaming interface
     stats will be returned, otherwise treated as a list of interface names to

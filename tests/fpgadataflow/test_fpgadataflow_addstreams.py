@@ -27,23 +27,23 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import pytest
-import numpy as np
 
+import numpy as np
 from onnx import TensorProto, helper
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.general import GiveUniqueNodeNames
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-from finn.core.datatype import DataType
-from finn.core.modelwrapper import ModelWrapper
-from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
-from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
+from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
-from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.general import GiveUniqueNodeNames
+from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
+from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
 from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
-from finn.util.basic import gen_finn_dt_tensor
-from finn.custom_op.registry import getCustomOp
-from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
+from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 
 
 def make_addstreams_modelwrapper(ch, pe, idt):
@@ -62,10 +62,13 @@ def make_addstreams_modelwrapper(ch, pe, idt):
         inputDataType=idt.name,
     )
     graph = helper.make_graph(
-        nodes=[addstreams_node], name="graph", inputs=[inp1, inp2], outputs=[outp],
+        nodes=[addstreams_node],
+        name="graph",
+        inputs=[inp1, inp2],
+        outputs=[outp],
     )
 
-    model = helper.make_model(graph, producer_name="addstreams-model")
+    model = qonnx_make_model(graph, producer_name="addstreams-model")
     model = ModelWrapper(model)
 
     model.set_tensor_datatype("inp1", idt)
@@ -79,13 +82,14 @@ def prepare_inputs(input1, input2):
 
 
 # data types
-@pytest.mark.parametrize("idt", [DataType.UINT4, DataType.UINT8])
+@pytest.mark.parametrize("idt", [DataType["UINT4"], DataType["UINT8"]])
 # channels
 @pytest.mark.parametrize("ch", [1, 64])
 # folding
 @pytest.mark.parametrize("fold", [-1, 2, 1])
 # execution mode
 @pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim"])
+@pytest.mark.fpgadataflow
 @pytest.mark.vivado
 def test_fpgadataflow_addstreams(idt, ch, fold, exec_mode):
     if fold == -1:

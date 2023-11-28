@@ -26,25 +26,35 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
-import shutil
-import subprocess
-
 import pytest
 
 import numpy as np
+import os
+import shutil
+import subprocess
+from qonnx.core.datatype import DataType
+from qonnx.util.basic import gen_finn_dt_tensor
 
-import finn.util.basic as cutil
-from finn.core.datatype import DataType
+from finn.util.basic import make_build_dir
 from finn.util.data_packing import numpy_to_hls_code
 
 
-@pytest.mark.parametrize("dtype", [DataType.BINARY, DataType.INT2, DataType.INT32])
+@pytest.mark.util
+@pytest.mark.parametrize(
+    "dtype",
+    [
+        DataType["BINARY"],
+        DataType["INT2"],
+        DataType["INT32"],
+        DataType["FIXED<9,6>"],
+        DataType["FLOAT32"],
+    ],
+)
 @pytest.mark.parametrize("test_shape", [(1, 2, 4), (1, 1, 64), (2, 64)])
 @pytest.mark.vivado
 def test_npy2apintstream(test_shape, dtype):
-    ndarray = cutil.gen_finn_dt_tensor(dtype, test_shape)
-    test_dir = cutil.make_build_dir(prefix="test_npy2apintstream_")
+    ndarray = gen_finn_dt_tensor(dtype, test_shape)
+    test_dir = make_build_dir(prefix="test_npy2apintstream_")
     shape = ndarray.shape
     elem_bits = dtype.bitwidth()
     packed_bits = shape[-1] * elem_bits
@@ -88,10 +98,10 @@ def test_npy2apintstream(test_shape, dtype):
     with open(test_dir + "/test.cpp", "w") as f:
         f.write("\n".join(test_app_string))
     cmd_compile = """
-g++ -o test_npy2apintstream test.cpp /workspace/cnpy/cnpy.cpp \
--I/workspace/cnpy/ -I{}/include -I/workspace/finn/src/finn/qnn-data/cpp \
+g++ -o test_npy2apintstream test.cpp $FINN_ROOT/deps/cnpy/cnpy.cpp \
+-I$FINN_ROOT/deps/cnpy/ -I{}/include -I$FINN_ROOT/src/finn/qnn-data/cpp \
 --std=c++11 -lz""".format(
-        os.environ["VIVADO_PATH"]
+        os.environ["HLS_PATH"]
     )
     with open(test_dir + "/compile.sh", "w") as f:
         f.write(cmd_compile)
@@ -115,22 +125,23 @@ g++ -o test_npy2apintstream test.cpp /workspace/cnpy/cnpy.cpp \
     assert success
 
 
+@pytest.mark.util
 def test_numpy_to_hls_code():
     def remove_all_whitespace(s):
         return "".join(s.split())
 
     A = [[1, 1, 1, 0], [0, 1, 1, 0]]
-    ret = numpy_to_hls_code(A, DataType.BINARY, "test", True)
+    ret = numpy_to_hls_code(A, DataType["BINARY"], "test", True)
     eA = """ap_uint<4> test[2] =
     {ap_uint<4>("0xe", 16), ap_uint<4>("0x6", 16)};"""
     assert remove_all_whitespace(ret) == remove_all_whitespace(eA)
     B = [[[3, 3], [3, 3]], [[1, 3], [3, 1]]]
-    ret = numpy_to_hls_code(B, DataType.UINT2, "test", True)
+    ret = numpy_to_hls_code(B, DataType["UINT2"], "test", True)
     eB = """ap_uint<4> test[2][2] =
     {{ap_uint<4>("0xf", 16), ap_uint<4>("0xf", 16)},
      {ap_uint<4>("0x7", 16), ap_uint<4>("0xd", 16)}};"""
     assert remove_all_whitespace(ret) == remove_all_whitespace(eB)
-    ret = numpy_to_hls_code(B, DataType.UINT2, "test", True, True)
+    ret = numpy_to_hls_code(B, DataType["UINT2"], "test", True, True)
     eB = """{{ap_uint<4>("0xf", 16), ap_uint<4>("0xf", 16)},
      {ap_uint<4>("0x7", 16), ap_uint<4>("0xd", 16)}};"""
     assert remove_all_whitespace(ret) == remove_all_whitespace(eB)

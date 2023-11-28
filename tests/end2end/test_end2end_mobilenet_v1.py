@@ -25,67 +25,55 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-import time
 import pytest
 
-from PIL import Image
-import os
-import numpy as np
 import brevitas.onnx as bo
+import numpy as np
+import os
+import time
 import torch
-
-from finn.custom_op.registry import getCustomOp
-from finn.util.pytorch import NormalizePreProc
-from finn.util.test import (
-    get_test_model_trained,
-    load_test_checkpoint_or_skip,
-    resize_smaller_side,
-    crop_center,
-)
-
-from finn.core.modelwrapper import ModelWrapper
-from finn.core.datatype import DataType
-
-from finn.transformation.infer_shapes import InferShapes
-from finn.transformation.infer_data_layouts import InferDataLayouts
-from finn.transformation.fold_constants import FoldConstants
-from finn.transformation.infer_datatypes import InferDataTypes
-from finn.transformation.general import (
+from PIL import Image
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.change_datalayout import ChangeDataLayoutQuantAvgPool2d
+from qonnx.transformation.double_to_single_float import DoubleToSingleFloat
+from qonnx.transformation.fold_constants import FoldConstants
+from qonnx.transformation.general import (
     GiveReadableTensorNames,
     GiveUniqueNodeNames,
     GiveUniqueParameterTensors,
     RemoveUnusedTensors,
 )
-from finn.transformation.merge_onnx_models import MergeONNXModels
-from finn.transformation.insert_topk import InsertTopK
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.transformation.insert_topk import InsertTopK
+from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
+from qonnx.transformation.merge_onnx_models import MergeONNXModels
+from qonnx.transformation.remove import RemoveIdentityOps
+
+import finn.transformation.fpgadataflow.convert_to_hls_layers as to_hls
 import finn.transformation.streamline.absorb as absorb
 import finn.transformation.streamline.reorder as reorder
-from finn.transformation.streamline import Streamline
-from finn.transformation.double_to_single_float import DoubleToSingleFloat
-from finn.transformation.streamline.remove import RemoveIdentityOps
-from finn.transformation.streamline.collapse_repeated import CollapseRepeatedMul
-from finn.transformation.change_datalayout import ChangeDataLayoutQuantAvgPool2d
-from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
-from finn.transformation.lower_convs_to_matmul import LowerConvsToMatMul
-import finn.transformation.fpgadataflow.convert_to_hls_layers as to_hls
+from finn.core.onnx_exec import execute_onnx
+from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
 from finn.transformation.fpgadataflow.create_dataflow_partition import (
     CreateDataflowPartition,
 )
-from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
-from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
-from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
-from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
-from finn.transformation.fpgadataflow.replace_verilog_relpaths import (
-    ReplaceVerilogRelPaths,
+from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
+from finn.transformation.streamline import Streamline
+from finn.transformation.streamline.collapse_repeated import CollapseRepeatedMul
+from finn.transformation.streamline.round_thresholds import RoundAndClipThresholds
+from finn.util.basic import alveo_default_platform, alveo_part_map, get_finn_root
+from finn.util.pytorch import NormalizePreProc
+from finn.util.test import (
+    crop_center,
+    get_test_model_trained,
+    load_test_checkpoint_or_skip,
+    resize_smaller_side,
 )
-from finn.transformation.fpgadataflow.annotate_resources import AnnotateResources
-from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
-from finn.core.onnx_exec import execute_onnx
-from finn.util.basic import alveo_part_map, alveo_default_platform
-from finn.util.config import extract_model_config_to_json
-from finn.transformation.fpgadataflow.vitis_build import VitisBuild, VitisOptStrategy
 
 build_dir = os.environ["FINN_BUILD_DIR"]
 
@@ -99,6 +87,7 @@ extra_fold = 1
 first_layer_res_type = "dsp"
 
 
+@pytest.mark.end2end
 def test_end2end_mobilenet_export():
     # export preprocessing
     preproc_onnx = build_dir + "/end2end_mobilenet_preproc.onnx"
@@ -109,8 +98,11 @@ def test_end2end_mobilenet_export():
     bo.export_finn_onnx(preproc, (1, 3, 224, 224), preproc_onnx)
     preproc_model = ModelWrapper(preproc_onnx)
     # set input finn datatype to UINT8
-    preproc_model.set_tensor_datatype(preproc_model.graph.input[0].name, DataType.UINT8)
+    preproc_model.set_tensor_datatype(
+        preproc_model.graph.input[0].name, DataType["UINT8"]
+    )
     preproc_model = preproc_model.transform(InferShapes())
+    preproc_model = preproc_model.transform(FoldConstants())
     preproc_model = preproc_model.transform(GiveUniqueNodeNames())
     preproc_model = preproc_model.transform(GiveUniqueParameterTensors())
     preproc_model = preproc_model.transform(GiveReadableTensorNames())
@@ -123,7 +115,7 @@ def test_end2end_mobilenet_export():
 
     # calculate golden output with pytorch/brevitas and save as .npy
     # get single image as input and prepare image
-    img = Image.open("/workspace/finn/tests/brevitas/king_charles.jpg")
+    img = Image.open(get_finn_root() + "/tests/brevitas/king_charles.jpg")
     # resize smallest side of the image to 256 pixels and resize larger side
     # with same ratio
     img = resize_smaller_side(256, img)
@@ -151,6 +143,7 @@ def test_end2end_mobilenet_export():
     assert os.path.isfile(build_dir + "/end2end_mobilenet_preproc.onnx")
 
 
+@pytest.mark.end2end
 def test_end2end_mobilenet_tidy_and_merge_with_preproc():
     preproc_model = load_test_checkpoint_or_skip(
         build_dir + "/end2end_mobilenet_preproc.onnx"
@@ -173,6 +166,7 @@ def test_end2end_mobilenet_tidy_and_merge_with_preproc():
     model.save(build_dir + "/end2end_mobilenet_tidy.onnx")
 
 
+@pytest.mark.end2end
 def test_end2end_mobilenet_streamline():
     model = load_test_checkpoint_or_skip(build_dir + "/end2end_mobilenet_tidy.onnx")
     model = model.transform(Streamline())
@@ -197,14 +191,20 @@ def test_end2end_mobilenet_streamline():
         model = model.transform(GiveReadableTensorNames())
         model = model.transform(InferDataTypes())
     model.save(build_dir + "/end2end_mobilenet_streamlined.onnx")
+    assert (
+        len(model.get_nodes_by_op_type("Add")) == 1
+    )  # only final quantized bias Add op remains
+    assert len(model.get_nodes_by_op_type("Mul")) == 0  # no Mul ops remain
 
 
+@pytest.mark.end2end
 def test_end2end_mobilenet_lowering():
     model = load_test_checkpoint_or_skip(
         build_dir + "/end2end_mobilenet_streamlined.onnx"
     )
     model = model.transform(LowerConvsToMatMul())
     model = model.transform(absorb.AbsorbTransposeIntoMultiThreshold())
+    model = model.transform(absorb.AbsorbConsecutiveTransposes())
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
     model = model.transform(InferDataTypes())
@@ -212,12 +212,13 @@ def test_end2end_mobilenet_lowering():
     model.save(build_dir + "/end2end_mobilenet_lowered.onnx")
 
 
+@pytest.mark.end2end
 def test_end2end_mobilenet_convert_to_hls_layers():
     model = load_test_checkpoint_or_skip(build_dir + "/end2end_mobilenet_lowered.onnx")
     model = model.transform(to_hls.InferPool_Batch())
     model = model.transform(to_hls.InferConvInpGen())
-    model = model.transform(to_hls.InferVVAU())
-    model = model.transform(to_hls.InferQuantizedStreamingFCLayer(mem_mode))
+    model = model.transform(to_hls.InferVectorVectorActivation())
+    model = model.transform(to_hls.InferQuantizedMatrixVectorActivation(mem_mode))
     model = model.transform(to_hls.InferChannelwiseLinearLayer())
     model = model.transform(to_hls.InferLabelSelectLayer())
     model = model.transform(InferShapes())
@@ -226,6 +227,7 @@ def test_end2end_mobilenet_convert_to_hls_layers():
     model.save(build_dir + "/end2end_mobilenet_hls_layers.onnx")
 
 
+@pytest.mark.end2end
 def test_end2end_mobilenet_folding():
     model = load_test_checkpoint_or_skip(
         build_dir + "/end2end_mobilenet_hls_layers.onnx"
@@ -235,7 +237,7 @@ def test_end2end_mobilenet_folding():
     assert extra_fold in [1, 2, 4]
     # set up folding for the depthwise conv layers impl'd by VVAUs
     # each value is PE for a layer
-    fc_layers = model.get_nodes_by_op_type("StreamingFCLayer_Batch")
+    fc_layers = model.get_nodes_by_op_type("MatrixVectorActivation")
     # each tuple is (PE, SIMD, ram_style) for a layer
     folding = [
         (32, 3, "block"),
@@ -264,7 +266,7 @@ def test_end2end_mobilenet_folding():
     getCustomOp(fc_layers[0]).set_nodeattr("resType", first_layer_res_type)
     # set up folding for the depthwise conv layers impl'd by VVAUs
     # each value is PE for a layer
-    vvau_layers = model.get_nodes_by_op_type("Vector_Vector_Activate_Batch")
+    vvau_layers = model.get_nodes_by_op_type("VectorVectorActivation")
     folding = [32, 32, 64, 16, 32, 8, 16, 16, 16, 16, 16, 4, 8]
     for vvau, pe in zip(vvau_layers, folding):
         vvau_inst = getCustomOp(vvau)
@@ -289,6 +291,7 @@ def test_end2end_mobilenet_folding():
     model.save(build_dir + "/end2end_mobilenet_folded.onnx")
 
 
+@pytest.mark.end2end
 def test_end2end_mobilenet_create_dataflow_partition():
     model = load_test_checkpoint_or_skip(build_dir + "/end2end_mobilenet_folded.onnx")
     parent_model = model.transform(CreateDataflowPartition())
@@ -303,6 +306,7 @@ def test_end2end_mobilenet_create_dataflow_partition():
 
 @pytest.mark.slow
 @pytest.mark.vivado
+@pytest.mark.end2end
 @pytest.mark.xfail
 def test_end2end_mobilenet_cppsim():
     model = load_test_checkpoint_or_skip(build_dir + "/end2end_mobilenet_folded.onnx")
@@ -334,101 +338,3 @@ def test_end2end_mobilenet_cppsim():
 
     assert (golden == res_cppsim).all()
     assert np.isclose(golden_prob, res_cppsim_prob).all()
-
-
-@pytest.mark.slow
-@pytest.mark.vivado
-def test_end2end_mobilenet_gen_hls_ip():
-    model = load_test_checkpoint_or_skip(
-        build_dir + "/end2end_mobilenet_dataflow_model.onnx"
-    )
-    start = time.time()
-    model = model.transform(PrepareIP(test_fpga_part, target_clk_ns))
-    model = model.transform(HLSSynthIP())
-    model = model.transform(ReplaceVerilogRelPaths())
-    end = time.time()
-    elapsed_time = end - start
-    f = open(build_dir + "/end2end_mobilenet_ipgen_time.txt", "w+")
-    f.write("Execution time in seconds: " + str(elapsed_time))
-    f.close()
-
-    model = model.transform(AnnotateResources("hls"))
-    model.save(build_dir + "/end2end_mobilenet_ipgen.onnx")
-
-
-@pytest.mark.slow
-@pytest.mark.vivado
-@pytest.mark.xfail
-def test_end2end_mobilenet_rtlsim():
-    model = load_test_checkpoint_or_skip(build_dir + "/end2end_mobilenet_ipgen.onnx")
-    x = np.load(build_dir + "/end2end_mobilenet_input.npy")
-    inp_name = model.graph.input[0].name
-    out_name = model.graph.output[0].name
-    inp_dict = {inp_name: x}
-    # node-by-node rtlsim
-    model = model.transform(SetExecMode("rtlsim"))
-    model = model.transform(PrepareRTLSim())
-    model.save(build_dir + "/end2end_mobilenet_ipgen_nodebynode_rtlsim.onnx")
-    ret_rtlsim_nodebynode = execute_onnx(model, inp_dict, True)
-    res_rtlsim_nodebynode = ret_rtlsim_nodebynode[out_name]
-    np.save(
-        build_dir + "/end2end_mobilenet_result_rtlsim_nodebynode.npy",
-        res_rtlsim_nodebynode,
-    )
-    a0 = np.load(build_dir + "/end2end_mobilenet_topk_scale.npy")
-    res_rtlsim_nodebynode_prob = (
-        ret_rtlsim_nodebynode[model.graph.node[-2].output[0]] * a0
-    )
-    np.save(
-        build_dir + "/end2end_mobilenet_result_rtlsim_nodebynode_prob.npy",
-        res_rtlsim_nodebynode_prob,
-    )
-
-    # check result with golden values
-    golden = np.load(build_dir + "/end2end_mobilenet_golden_top5.npy")
-    golden_prob = np.load(build_dir + "/end2end_mobilenet_golden_top5_prob.npy")
-
-    assert (golden == res_rtlsim_nodebynode).all()
-    assert np.isclose(golden_prob, res_rtlsim_nodebynode_prob).all()
-
-
-@pytest.mark.slow
-@pytest.mark.vivado
-def test_end2end_mobilenet_set_fifo_depths():
-    model = load_test_checkpoint_or_skip(build_dir + "/end2end_mobilenet_ipgen.onnx")
-    start = time.time()
-    model = model.transform(
-        InsertAndSetFIFODepths(
-            test_fpga_part, target_clk_ns, vivado_ram_style=large_fifo_ram_style
-        )
-    )
-    end = time.time()
-    elapsed_time = end - start
-    f = open(build_dir + "/end2end_mobilenet_fifoset_time.txt", "w+")
-    f.write("Execution time in seconds: " + str(elapsed_time))
-    f.close()
-    extract_model_config_to_json(
-        model,
-        build_dir + "/end2end_mobilenet_folded_and_fifo_config.json",
-        ["PE", "SIMD", "impl_style", "ram_style", "depth"],
-    )
-    model.save(build_dir + "/end2end_mobilenet_fifodepth.onnx")
-
-
-@pytest.mark.slow
-@pytest.mark.vitis
-def test_end2end_mobilenet_build():
-    model = load_test_checkpoint_or_skip(
-        build_dir + "/end2end_mobilenet_fifodepth.onnx"
-    )
-    model = model.transform(
-        VitisBuild(
-            test_fpga_part,
-            target_clk_ns,
-            test_platform,
-            strategy=VitisOptStrategy.PERFORMANCE_BEST,
-        )
-    )
-    model.save(build_dir + "/end2end_mobilenet_build.onnx")
-    model = model.transform(AnnotateResources("synth"))
-    model.save(build_dir + "/end2end_mobilenet_final.onnx")

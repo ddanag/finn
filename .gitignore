@@ -77,9 +77,6 @@ MANIFEST
 # Per-project virtualenvs
 .venv*/
 
-# Jenkins cfg dir
-/docker/jenkins_home
-
 # SSH key dir mounted into Docker
 /ssh_keys/
 
@@ -97,6 +94,7 @@ MANIFEST
 # generated files as part of end2end notebooks
 /notebooks/end2end_example/**/*.onnx
 
+<<<<<<< HEAD
 # graphs folder from resource modelling
 /resource_modelling/graphs/*
 
@@ -114,3 +112,7 @@ MANIFEST
 
 #saved onnx models
 /*.onnx
+=======
+# downloaded dep repos
+/deps/
+>>>>>>> upstream/main

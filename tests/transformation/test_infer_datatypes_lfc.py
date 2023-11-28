@@ -26,21 +26,23 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
+import pytest
 
 import brevitas.onnx as bo
+import os
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.fold_constants import FoldConstants
+from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
 
-from finn.core.datatype import DataType
-from finn.core.modelwrapper import ModelWrapper
-from finn.transformation.fold_constants import FoldConstants
-from finn.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
-from finn.transformation.infer_datatypes import InferDataTypes
-from finn.transformation.infer_shapes import InferShapes
 from finn.util.test import get_test_model_trained
 
 export_onnx_path = "test_infer_datatypes.onnx"
 
 
+@pytest.mark.transform
 def test_infer_datatypes_lfc():
     lfc = get_test_model_trained("LFC", 1, 1)
     bo.export_finn_onnx(lfc, (1, 1, 28, 28), export_onnx_path)
@@ -50,12 +52,12 @@ def test_infer_datatypes_lfc():
     model = model.transform(GiveUniqueNodeNames())
     model = model.transform(GiveReadableTensorNames())
     model = model.transform(InferDataTypes())
-    assert model.get_tensor_datatype("MatMul_0_out0") == DataType.INT32
-    assert model.get_tensor_datatype("MatMul_1_out0") == DataType.INT32
-    assert model.get_tensor_datatype("MatMul_2_out0") == DataType.INT32
-    assert model.get_tensor_datatype("MatMul_3_out0") == DataType.INT32
-    assert model.get_tensor_datatype("MultiThreshold_0_out0") == DataType.BIPOLAR
-    assert model.get_tensor_datatype("MultiThreshold_1_out0") == DataType.BIPOLAR
-    assert model.get_tensor_datatype("MultiThreshold_2_out0") == DataType.BIPOLAR
-    assert model.get_tensor_datatype("MultiThreshold_3_out0") == DataType.BIPOLAR
+    assert model.get_tensor_datatype("MatMul_0_out0") == DataType["INT32"]
+    assert model.get_tensor_datatype("MatMul_1_out0") == DataType["INT32"]
+    assert model.get_tensor_datatype("MatMul_2_out0") == DataType["INT32"]
+    assert model.get_tensor_datatype("MatMul_3_out0") == DataType["INT32"]
+    assert model.get_tensor_datatype("MultiThreshold_0_out0") == DataType["BIPOLAR"]
+    assert model.get_tensor_datatype("MultiThreshold_1_out0") == DataType["BIPOLAR"]
+    assert model.get_tensor_datatype("MultiThreshold_2_out0") == DataType["BIPOLAR"]
+    assert model.get_tensor_datatype("MultiThreshold_3_out0") == DataType["BIPOLAR"]
     os.remove(export_onnx_path)

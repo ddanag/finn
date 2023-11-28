@@ -27,10 +27,11 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
-import finn.custom_op.registry as registry
-from finn.util.fpgadataflow import is_fpgadataflow_node
-from finn.transformation.base import NodeLocalTransformation
+import qonnx.custom_op.registry as registry
 import warnings
+from qonnx.transformation.base import NodeLocalTransformation
+
+from finn.util.fpgadataflow import is_fpgadataflow_node
 
 
 class HLSSynthIP(NodeLocalTransformation):
@@ -63,7 +64,11 @@ class HLSSynthIP(NodeLocalTransformation):
                 ), """Node
                 attribute "code_gen_dir_ipgen" is empty. Please run
                 transformation PrepareIP first."""
-                if not os.path.isdir(inst.get_nodeattr("ipgen_path")):
+                if not os.path.isdir(
+                    inst.get_nodeattr("ipgen_path")
+                ) or not inst.get_nodeattr("code_gen_dir_ipgen") in inst.get_nodeattr(
+                    "ipgen_path"
+                ):
                     # call the compilation function for this node
                     inst.ipgen_singlenode_code()
                 else:

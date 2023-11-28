@@ -26,33 +26,36 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
 import pkg_resources as pk
+
+import pytest
 
 import brevitas.onnx as bo
 import numpy as np
-import pytest
+import os
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopcount
+from qonnx.transformation.fold_constants import FoldConstants
+from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
+
 import finn.core.onnx_exec as oxe
-import finn.transformation.streamline.absorb as absorb
-from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
-from finn.core.modelwrapper import ModelWrapper
-from finn.transformation.fold_constants import FoldConstants
-from finn.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
-from finn.transformation.infer_shapes import InferShapes
-from finn.transformation.infer_data_layouts import InferDataLayouts
-from finn.transformation.streamline import Streamline
-from finn.util.test import get_test_model_trained
-from finn.transformation.lower_convs_to_matmul import LowerConvsToMatMul
-from finn.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopcount
 import finn.transformation.fpgadataflow.convert_to_hls_layers as to_hls
-from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
+import finn.transformation.streamline.absorb as absorb
 from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.custom_op.registry import getCustomOp
+from finn.transformation.streamline import Streamline
+from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
+from finn.util.test import get_test_model_trained
 
 export_onnx_path_cnv = "test_convert_to_hls_layers_cnv.onnx"
 
 
+@pytest.mark.fpgadataflow
 @pytest.mark.vivado
 # Standalone or fused thresholding-based activation
 @pytest.mark.parametrize("fused_activation", [True, False])
@@ -68,6 +71,7 @@ def test_convert_to_hls_layers_cnv_w1a1(fused_activation):
     model = model.transform(LowerConvsToMatMul())
     model = model.transform(MakeMaxPoolNHWC())
     model = model.transform(absorb.AbsorbTransposeIntoMultiThreshold())
+    model = model.transform(absorb.AbsorbConsecutiveTransposes())
     model = model.transform(ConvertBipolarMatMulToXnorPopcount())
     model = model.transform(Streamline())
     model = model.transform(InferDataLayouts())
@@ -86,10 +90,10 @@ def test_convert_to_hls_layers_cnv_w1a1(fused_activation):
     # subsequently, the FC inference will generate passthrough MVAUs
     if not fused_activation:
         model = model.transform(to_hls.InferThresholdingLayer())
-    model = model.transform(to_hls.InferBinaryStreamingFCLayer())
-    model = model.transform(to_hls.InferQuantizedStreamingFCLayer())
+    model = model.transform(to_hls.InferBinaryMatrixVectorActivation())
+    model = model.transform(to_hls.InferQuantizedMatrixVectorActivation())
     for node in model.graph.node:
-        if node.op_type == "StreamingFCLayer_Batch":
+        if node.op_type == "MatrixVectorActivation":
             inst = getCustomOp(node)
             inst.set_nodeattr("mem_mode", "decoupled")
             mw = inst.get_nodeattr("MW")
@@ -115,10 +119,10 @@ def test_convert_to_hls_layers_cnv_w1a1(fused_activation):
         thr_nodes = model.get_nodes_by_op_type("Thresholding_Batch")
         assert len(thr_nodes) == 8
     non_finn_nodes = model.get_non_finn_nodes()
-    assert len(non_finn_nodes) == 4
-    exp_non_finn_nodes = ["Transpose", "Reshape", "Mul", "Add"]
+    assert len(non_finn_nodes) == 5
+    exp_non_finn_nodes = ["Transpose", "Transpose", "Reshape", "Mul", "Add"]
     assert [x.op_type for x in non_finn_nodes] == exp_non_finn_nodes
-    fc_nodes = model.get_nodes_by_op_type("StreamingFCLayer_Batch")
+    fc_nodes = model.get_nodes_by_op_type("MatrixVectorActivation")
     assert len(fc_nodes) == 9
     swg_nodes = model.get_nodes_by_op_type("ConvolutionInputGenerator")
     assert len(swg_nodes) == 6

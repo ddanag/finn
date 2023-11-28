@@ -28,9 +28,8 @@
 
 import numpy as np
 from onnx import helper as oh
-
-from finn.core.datatype import DataType
-from finn.transformation.base import Transformation
+from qonnx.core.datatype import DataType
+from qonnx.transformation.base import Transformation
 
 
 class ConvertSignToThres(Transformation):
@@ -60,7 +59,7 @@ class ConvertSignToThres(Transformation):
                     "MultiThreshold",
                     [sign_in_name, thres_param_name],
                     [sign_out_name],
-                    domain="finn.custom_op.general",
+                    domain="qonnx.custom_op.general",
                     out_scale=2.0,
                     out_bias=-1.0,
                     out_dtype="BIPOLAR",
@@ -69,6 +68,6 @@ class ConvertSignToThres(Transformation):
                 graph.node.insert(node_ind, mt_node)
                 graph.node.remove(n)
                 # add quantization annotations
-                model.set_tensor_datatype(sign_out_name, DataType.BIPOLAR)
+                model.set_tensor_datatype(sign_out_name, DataType["BIPOLAR"])
                 graph_modified = True
         return (model, graph_modified)

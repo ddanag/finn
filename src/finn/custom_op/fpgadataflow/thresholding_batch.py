@@ -26,25 +26,25 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from math import ceil, log2
-import textwrap
-import os
-import warnings
 import numpy as np
-
-from onnx import TensorProto, helper
-from finn.core.datatype import DataType
-from finn.custom_op.fpgadataflow.hlscustomop import HLSCustomOp
-from finn.util.basic import (
+import os
+import textwrap
+import warnings
+from math import ceil, log2
+from qonnx.core.datatype import DataType
+from qonnx.util.basic import (
     interleave_matrix_outer_dim_from_partitions,
     roundup_to_integer_multiple,
 )
+
+from finn.custom_op.fpgadataflow.hlscustomop import HLSCustomOp
 from finn.util.data_packing import (
     npy_to_rtlsim_input,
     numpy_to_hls_code,
-    rtlsim_output_to_npy,
     pack_innermost_dim_as_hex_string,
+    rtlsim_output_to_npy,
 )
+
 from . import templates
 
 # ONNX i/o tensor shape assumptions for Thresholding:
@@ -75,9 +75,6 @@ class Thresholding_Batch(HLSCustomOp):
             "inputDataType": ("s", True, ""),
             "weightDataType": ("s", True, ""),
             "outputDataType": ("s", True, ""),
-            # input and output FIFO depths
-            "inFIFODepth": ("i", False, 0),
-            "outFIFODepth": ("i", False, 0),
             # number of input vectors, examples:
             # [1] is a single vector (like a FC layer with batch=1)
             # [4] is four vectors (like a FC layer with batch=4)
@@ -111,19 +108,7 @@ class Thresholding_Batch(HLSCustomOp):
 
     def make_shape_compatible_op(self, model):
         oshape = self.get_normal_output_shape()
-        # implement tensor with correct shape
-        values = np.random.randn(*oshape).astype(np.float32)
-        return helper.make_node(
-            "Constant",
-            inputs=[],
-            outputs=[self.onnx_node.output[0]],
-            value=helper.make_tensor(
-                name="const_tensor",
-                data_type=TensorProto.FLOAT,
-                dims=values.shape,
-                vals=values.flatten().astype(float),
-            ),
-        )
+        return super().make_const_shape_op(oshape)
 
     def infer_node_datatype(self, model):
         node = self.onnx_node
@@ -131,8 +116,8 @@ class Thresholding_Batch(HLSCustomOp):
         if idt != self.get_input_datatype():
             warn_str = "inputDataType changing for %s: %s -> %s " % (
                 node.name,
-                str(self.get_input_datatype()),
-                str(idt),
+                str(self.get_input_datatype().name),
+                str(idt.name),
             )
             warnings.warn(warn_str)
         self.set_nodeattr("inputDataType", idt.name)
@@ -180,7 +165,7 @@ class Thresholding_Batch(HLSCustomOp):
             return 0
 
     def lut_estimation(self):
-        """Calculates LUT cost, taking memory resource type into account """
+        """Calculates LUT cost, taking memory resource type into account"""
         # TODO add in/out FIFO contributions
         style = self.get_nodeattr("ram_style")
         P = self.get_nodeattr("PE")
@@ -197,11 +182,11 @@ class Thresholding_Batch(HLSCustomOp):
         # total cost
         return comparator_cost + lutram_cost
 
-    def get_input_datatype(self):
+    def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""
         return DataType[self.get_nodeattr("inputDataType")]
 
-    def get_output_datatype(self):
+    def get_output_datatype(self, ind=0):
         """Returns FINN DataType of output."""
         return DataType[self.get_nodeattr("outputDataType")]
 
@@ -224,7 +209,7 @@ class Thresholding_Batch(HLSCustomOp):
             if abs(tdt_min) > tdt_max:
                 tdt = DataType.get_smallest_possible(tdt_min)
             else:
-                tdt = DataType.get_smallest_possible(0 - tdt_max - 1)
+                tdt = DataType.get_smallest_possible(-tdt_max - 1)
         else:
             tdt = DataType.get_smallest_possible(tdt_max)
         assert np.vectorize(tdt.allowed)(
@@ -233,11 +218,11 @@ class Thresholding_Batch(HLSCustomOp):
         self.set_nodeattr("weightDataType", tdt.name)
         return DataType[self.get_nodeattr("weightDataType")]
 
-    def get_instream_width(self):
+    def get_instream_width(self, ind=0):
         i_bits = self.get_input_datatype().bitwidth()
         return i_bits * self.get_nodeattr("PE")
 
-    def get_outstream_width(self):
+    def get_outstream_width(self, ind=0):
         o_bits = self.get_output_datatype().bitwidth()
         return o_bits * self.get_nodeattr("PE")
 
@@ -263,7 +248,7 @@ class Thresholding_Batch(HLSCustomOp):
         weightstream = self.get_weightstream_width()
         return max([weightstream, temp_value])
 
-    def get_folded_input_shape(self):
+    def get_folded_input_shape(self, ind=0):
         ich = self.get_nodeattr("NumChannels")
         pe = self.get_nodeattr("PE")
         fold = ich // pe
@@ -271,17 +256,17 @@ class Thresholding_Batch(HLSCustomOp):
         folded_input_shape = tuple(vecs + [fold, pe])
         return folded_input_shape
 
-    def get_folded_output_shape(self):
+    def get_folded_output_shape(self, ind=0):
         # same shape as input
         return self.get_folded_input_shape()
 
-    def get_normal_input_shape(self):
+    def get_normal_input_shape(self, ind=0):
         ich = self.get_nodeattr("NumChannels")
         vecs = list(self.get_nodeattr("numInputVectors"))
         normal_input_shape = tuple(vecs + [ich])
         return normal_input_shape
 
-    def get_normal_output_shape(self):
+    def get_normal_output_shape(self, ind=0):
         # same shape as input
         return self.get_normal_input_shape()
 
@@ -335,7 +320,7 @@ class Thresholding_Batch(HLSCustomOp):
         ).all(), "Need int threshold tensor"
         ret = orig_thres_matrix
         # workaround for vivado_hls threshold bug
-        if ret[0][0] == 0:
+        if ret[0][0] == 0 and n_thres_steps == 1:
             ret = np.copy(ret)
             ret[0][0] = 1
             warnings.warn(
@@ -369,10 +354,12 @@ class Thresholding_Batch(HLSCustomOp):
         run-time reconfig of weights.
 
         Arguments:
+
         * weights : numpy array with weights to be put into the file
         * weight_file_mode : one of {hls_header, decoupled_verilog_dat,
           decoupled_runtime}
         * weight_file_name : filename for the weight file to be generated
+
         """
         threshold_tensor = self.get_hls_compatible_threshold_tensor(weights)
         tdt = self.get_weight_datatype()
@@ -389,8 +376,8 @@ class Thresholding_Batch(HLSCustomOp):
             tdt_hls = tdt.get_hls_datatype_str()
             # use binary to export bipolar activations
             export_odt = self.get_output_datatype()
-            if self.get_output_datatype() == DataType.BIPOLAR:
-                export_odt = DataType.BINARY
+            if self.get_output_datatype() == DataType["BIPOLAR"]:
+                export_odt = DataType["BINARY"]
             odt_hls = export_odt.get_hls_datatype_str()
             f_thresh.write(
                 "static ThresholdsActivation<{},{},{},{},{},{},{}> threshs \
@@ -401,7 +388,7 @@ class Thresholding_Batch(HLSCustomOp):
                     tdt_hls,
                     odt_hls,
                     self.get_nodeattr("ActVal"),
-                    "comp::less_equal<%s>" % tdt_hls,
+                    "comp::less_equal<%s, %s>" % (tdt_hls, tdt_hls),
                 )
             )
             f_thresh.write(thresholds_hls_code)
@@ -477,9 +464,26 @@ class Thresholding_Batch(HLSCustomOp):
             weight_filename_sim = "{}/thresholds.npy".format(code_gen_dir)
             self.make_weight_file(thresholds, "decoupled_npy", weight_filename_sim)
             # also save weights as Verilog .dat file
-            weight_filename_rtl = "{}/memblock_0.dat".format(code_gen_dir)
+            # note that we provide two different .dat files, one for synth
+            # and one for synthesis. this is because URAM-based weights always
+            # need zero weights for synthesis, otherwise they get inferred
+            # as BRAM
+            weight_filename_rtl_synth = "{}/memblock_synth_0.dat".format(code_gen_dir)
+            weight_filename_rtl_sim = "{}/memblock_sim_0.dat".format(code_gen_dir)
+            # sim weights are always the true weights
             self.make_weight_file(
-                thresholds, "decoupled_verilog_dat", weight_filename_rtl
+                thresholds, "decoupled_verilog_dat", weight_filename_rtl_sim
+            )
+            ram_style = self.get_nodeattr("ram_style")
+            if ram_style == "ultra":
+                # UltraRAM must have no memory initializer, or only zeroes
+                # otherwise BRAM will be inferred instead of URAM
+                # as a workaround we provide a zero-weight init here
+                synth_thresholds = np.zeros_like(thresholds, dtype=np.float32)
+            else:
+                synth_thresholds = thresholds
+            self.make_weight_file(
+                synth_thresholds, "decoupled_verilog_dat", weight_filename_rtl_synth
             )
         else:
             raise Exception("Unrecognized mem_mode")
@@ -514,10 +518,10 @@ class Thresholding_Batch(HLSCustomOp):
                 not float32 as expected."""
                 expected_inp_shape = self.get_folded_input_shape()
                 reshaped_input = context[inputs].reshape(expected_inp_shape)
-                if self.get_input_datatype() == DataType.BIPOLAR:
+                if self.get_input_datatype() == DataType["BIPOLAR"]:
                     # store bipolar activations as binary
                     reshaped_input = (reshaped_input + 1) / 2
-                    export_idt = DataType.BINARY
+                    export_idt = DataType["BINARY"]
                 else:
                     export_idt = self.get_input_datatype()
                 # make copy before saving the array
@@ -536,16 +540,14 @@ class Thresholding_Batch(HLSCustomOp):
             # load output npy file
             super().npy_to_dynamic_output(context)
             # reinterpret binary output as bipolar where needed
-            if self.get_output_datatype() == DataType.BIPOLAR:
+            if self.get_output_datatype() == DataType["BIPOLAR"]:
                 out = context[node.output[0]]
                 out = 2 * out - 1
                 context[node.output[0]] = out
-            assert (
-                context[node.output[0]].shape == self.get_folded_output_shape()
-            ), """Output shape is not as expected"""
-            # reshape output to have expected shape
             oshape = self.get_normal_output_shape()
-            context[node.output[0]] = context[node.output[0]].reshape(*oshape)
+            assert (
+                context[node.output[0]].shape == oshape
+            ), """Output shape is not as expected"""
         elif mode == "rtlsim":
             sim = self.get_rtlsim()
             nbits = self.get_instream_width()
@@ -600,11 +602,17 @@ class Thresholding_Batch(HLSCustomOp):
 
     # TODO check and add whatever missing
     def defines(self, var):
+        numReps = 1
         numInputVectors = list(self.get_nodeattr("numInputVectors"))
-        numReps = numInputVectors[0]
+        total_spatial_size = int(np.prod(numInputVectors))
+
         self.code_gen_dict["$DEFINES$"] = [
-            """#define NumChannels1 {}\n #define PE1 {}\n #define numReps {}""".format(
-                self.get_nodeattr("NumChannels"), self.get_nodeattr("PE"), numReps,
+            """#define NumChannels1 {}\n #define PE1 {}\n #define numReps {}\n
+               #define ImgDim1 {}""".format(
+                self.get_nodeattr("NumChannels"),
+                self.get_nodeattr("PE"),
+                numReps,
+                total_spatial_size,
             )
         ]
         if self.get_nodeattr("mem_mode") == "decoupled":
@@ -617,10 +625,6 @@ class Thresholding_Batch(HLSCustomOp):
             )
             self.code_gen_dict["$DEFINES$"].append(
                 "#define NumSteps1 %d" % self.get_nodeattr("numSteps")
-            )
-            # TODO remove once Thresholding_Stream_Batch is in hlslib:
-            self.code_gen_dict["$DEFINES$"].append(
-                templates.decoupled_thresholding_template
             )
 
     def read_npy_data(self):
@@ -649,7 +653,7 @@ class Thresholding_Batch(HLSCustomOp):
             npy_in = "%s/thresholds.npy" % code_gen_dir
 
             self.code_gen_dict["$READNPYDATA$"].append(
-                'npy2apintstream<%s, %s, %d, %s>("%s", weights, false, numReps);'
+                'npy2apintstream<%s, %s, %d, %s>("%s", weights, false, ImgDim1);'
                 % (packed_hls_type, elem_hls_type, elem_bits, npy_type, npy_in)
             )
 
@@ -671,30 +675,25 @@ class Thresholding_Batch(HLSCustomOp):
 
     def docompute(self):
         tmpl_args = self.get_template_param_values()
-        # TODO: why put some template parameters into defines and not others?
-        # should ImgDim be defined or just filled in here like we do now?
         node = self.onnx_node
-        ishape = self.get_folded_input_shape()
-        if len(ishape) == 3:
-            imgdim = 1
-        elif len(ishape) == 5:
-            imgdim = ishape[1]
-        else:
-            raise Exception("""Unexpeted input shape""")
         mem_mode = self.get_nodeattr("mem_mode")
         if mem_mode == "const":
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                """{}<{}, NumChannels1, PE1, {}, {}>
+                """{}<ImgDim1, NumChannels1, PE1, {}, {}>
                 (in0, out, threshs, numReps);""".format(
-                    node.op_type, imgdim, tmpl_args["TSrcI"], tmpl_args["TDstI"],
+                    node.op_type,
+                    tmpl_args["TSrcI"],
+                    tmpl_args["TDstI"],
                 )
             ]
         elif mem_mode == "decoupled":
+            # note that numReps is set to 1 in the invocation below, since
+            # - for cppsim the repetition comes from the threshold stream reader+input
+            # - for synth the unit runs continuously anyway (ap_ctrl_none)
             self.code_gen_dict["$DOCOMPUTE$"] = [
-                """{}<{}, NumChannels1, PE1, {}, {}, ActVal1, ThresType1, NumSteps1>
+                """{}<ImgDim1, NumChannels1, PE1, {}, {}, ActVal1, ThresType1, NumSteps1>
                 (in0, out, weights, numReps);""".format(
                     "Thresholding_Stream_Batch",
-                    imgdim,
                     tmpl_args["TSrcI"],
                     tmpl_args["TDstI"],
                 )
@@ -705,9 +704,9 @@ class Thresholding_Batch(HLSCustomOp):
     def dataoutstrm(self):
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
-        if dtype == DataType.BIPOLAR:
+        if dtype == DataType["BIPOLAR"]:
             # use binary for bipolar storage
-            dtype = DataType.BINARY
+            dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_outstream_width()
         packed_hls_type = "ap_uint<%d>" % packed_bits
@@ -760,8 +759,12 @@ class Thresholding_Batch(HLSCustomOp):
             raise Exception("Unrecognized mem_mode")
 
     def pragmas(self):
-        self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0"]
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out")
+        self.code_gen_dict["$PRAGMAS$"] = [
+            "#pragma HLS INTERFACE axis port=in0 name=in0_" + self.hls_sname()
+        ]
+        self.code_gen_dict["$PRAGMAS$"].append(
+            "#pragma HLS INTERFACE axis port=out name=out_" + self.hls_sname()
+        )
         self.code_gen_dict["$PRAGMAS$"].append(
             "#pragma HLS INTERFACE ap_ctrl_none port=return"
         )
@@ -818,7 +821,8 @@ class Thresholding_Batch(HLSCustomOp):
                     )
         elif self.get_nodeattr("mem_mode") == "decoupled":
             self.code_gen_dict["$PRAGMAS$"].append(
-                "#pragma HLS INTERFACE axis port=weights"
+                "#pragma HLS INTERFACE axis port=weights name=weights_"
+                + self.hls_sname()
             )
 
     def code_generation_ipi(self):
@@ -828,6 +832,7 @@ class Thresholding_Batch(HLSCustomOp):
         if mem_mode == "decoupled":
             node_name = self.onnx_node.name
             runtime_writable = self.get_nodeattr("runtime_writeable_weights") == 1
+            sname = self.hls_sname()
             # create a hierarchy for this layer, with the same port names
             clk_name = self.get_verilog_top_module_intf_names()["clk"][0]
             rst_name = self.get_verilog_top_module_intf_names()["rst"][0]
@@ -881,8 +886,8 @@ class Thresholding_Batch(HLSCustomOp):
             )
             cmd.append(
                 "connect_bd_intf_net [get_bd_intf_pins %s/%s/m_axis_0] "
-                "[get_bd_intf_pins %s/%s/weights_V_V]"
-                % (node_name, strm_inst, node_name, node_name)
+                "[get_bd_intf_pins %s/%s/weights_%s]"
+                % (node_name, strm_inst, node_name, node_name, sname)
             )
             cmd.append(
                 "connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s/aresetn]"
@@ -953,3 +958,25 @@ class Thresholding_Batch(HLSCustomOp):
         thres_count = out_features * num_steps
         ret_dict[thres_param_type] = thres_count
         return ret_dict
+
+    def ipgen_extra_directives(self):
+        "Return a list of extra tcl directives for HLS synthesis."
+
+        return ["config_compile -pipeline_style frp"]
+
+    def derive_characteristic_fxns(self, period):
+        n_inps = np.prod(self.get_folded_input_shape()[:-1])
+        io_dict = {
+            "inputs": {
+                "in0": [0 for i in range(n_inps)],
+            },
+            "outputs": {"out": []},
+        }
+        mem_mode = self.get_nodeattr("mem_mode")
+        if mem_mode in ["decoupled", "external"]:
+            n_weight_inps = self.calc_tmem()
+            num_w_reps = np.prod(self.get_nodeattr("numInputVectors"))
+            io_dict["inputs"]["weights"] = [
+                0 for i in range(num_w_reps * n_weight_inps)
+            ]
+        super().derive_characteristic_fxns(period, override_rtlsim_dict=io_dict)

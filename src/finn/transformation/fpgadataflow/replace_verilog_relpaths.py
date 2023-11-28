@@ -27,10 +27,10 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
+import qonnx.custom_op.registry as registry
+from qonnx.transformation.base import Transformation
 
-import finn.custom_op.registry as registry
 from finn.util.fpgadataflow import is_fpgadataflow_node
-from finn.transformation.base import Transformation
 
 
 class ReplaceVerilogRelPaths(Transformation):

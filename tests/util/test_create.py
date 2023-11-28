@@ -28,11 +28,15 @@
 
 import pytest
 
+from qonnx.core.datatype import DataType
+
 import finn.util.create as create
-from finn.core.datatype import DataType
 
 
-@pytest.mark.parametrize("bitwidth", [DataType.BIPOLAR, DataType.INT2, DataType.INT4])
+@pytest.mark.util
+@pytest.mark.parametrize(
+    "bitwidth", [DataType["BIPOLAR"], DataType["INT2"], DataType["INT4"]]
+)
 def test_hls_random_mlp_maker(bitwidth):
     w = bitwidth
     a = bitwidth
@@ -42,7 +46,7 @@ def test_hls_random_mlp_maker(bitwidth):
             "mh": 100,
             "simd": 185,
             "pe": 100,
-            "idt": DataType.BIPOLAR,
+            "idt": DataType["BIPOLAR"],
             "wdt": w,
             "act": a,
         },
@@ -56,7 +60,7 @@ def test_hls_random_mlp_maker(bitwidth):
             "pe": 1,
             "idt": a,
             "wdt": w,
-            "act": DataType.BIPOLAR,
+            "act": DataType["BIPOLAR"],
         },
     ]
 

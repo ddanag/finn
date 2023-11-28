@@ -25,24 +25,26 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-# namespace package, extend path
 
-from abc import abstractmethod
 import numpy as np
 import os
 import subprocess
-from finn.custom_op.base import CustomOp
+import warnings
+from abc import abstractmethod
+from pyverilator.util.axi_utils import _read_signal, reset_rtlsim, rtlsim_multi_io
+from qonnx.core.datatype import DataType
+from qonnx.custom_op.base import CustomOp
+from qonnx.util.basic import roundup_to_integer_multiple
+
 from finn.util.basic import (
     CppBuilder,
-    make_build_dir,
-    roundup_to_integer_multiple,
     get_rtlsim_trace_depth,
-)
-from finn.util.pyverilator import (
+    make_build_dir,
     pyverilate_get_liveness_threshold_cycles,
-    rtlsim_multi_io,
 )
 from finn.util.hls import CallHLS
+from finn.util.pyverilator import make_single_source_file
+
 from . import templates
 
 try:
@@ -107,16 +109,26 @@ class HLSCustomOp(CustomOp):
             # ID of FPGA device to which this Op is allocated, in
             # a multi-FPGA setting
             "device_id": ("i", False, 0),
-            # input and output FIFO depths
-            "inFIFODepth": ("i", False, 2),
-            "outFIFODepth": ("i", False, 2),
+            # input and output FIFO depths for multi-I/O nodes
+            "inFIFODepths": ("ints", False, [2]),
+            "outFIFODepths": ("ints", False, [2]),
+            "output_hook": ("s", False, ""),
+            # accumulated characteristic function over two periods
+            "io_chrc_in": ("t", False, np.asarray([], dtype=np.int32)),
+            "io_chrc_out": ("t", False, np.asarray([], dtype=np.int32)),
+            # the period for which the characterization was run
+            "io_chrc_period": ("i", False, 0),
+            # amount of zero padding inserted during chrc.
+            "io_chrc_pads_in": ("ints", False, []),
+            "io_chrc_pads_out": ("ints", False, []),
         }
 
     def get_verilog_top_module_name(self):
         "Return the Verilog top module name for this node."
 
         node = self.onnx_node
-        prefixed_top_name = "%s_%s" % (node.name, node.name)
+        prefixed_top_name = node.name
+
         return prefixed_top_name
 
     def get_verilog_top_module_intf_names(self):
@@ -131,10 +143,12 @@ class HLSCustomOp(CustomOp):
         intf_names = {}
         intf_names["clk"] = ["ap_clk"]
         intf_names["rst"] = ["ap_rst_n"]
-        intf_names["s_axis"] = [("in0_V_V", self.get_instream_width_padded())]
-        intf_names["m_axis"] = [("out_V_V", self.get_outstream_width_padded())]
+        sname = self.hls_sname()
+        intf_names["s_axis"] = [("in0_" + sname, self.get_instream_width_padded())]
+        intf_names["m_axis"] = [("out_" + sname, self.get_outstream_width_padded())]
         intf_names["aximm"] = []
         intf_names["axilite"] = []
+        intf_names["ap_none"] = []
         return intf_names
 
     def get_verilog_top_filename(self):
@@ -161,7 +175,7 @@ class HLSCustomOp(CustomOp):
         # default impl only returns the HLS verilog codegen dir
         return [verilog_path]
 
-    def get_all_verilog_filenames(self):
+    def get_all_verilog_filenames(self, abspath=False):
         "Return list of all Verilog files used for this node."
 
         verilog_files = []
@@ -169,7 +183,10 @@ class HLSCustomOp(CustomOp):
         for verilog_path in verilog_paths:
             for f in os.listdir(verilog_path):
                 if f.endswith(".v"):
-                    verilog_files += [f]
+                    if abspath:
+                        verilog_files += [verilog_path + "/" + f]
+                    else:
+                        verilog_files += [f]
         return verilog_files
 
     def prepare_rtlsim(self):
@@ -179,13 +196,18 @@ class HLSCustomOp(CustomOp):
 
         if PyVerilator is None:
             raise ImportError("Installation of PyVerilator is required.")
-        verilog_paths = self.get_all_verilog_paths()
-        verilog_files = self.get_all_verilog_filenames()
+
+        verilog_files = self.get_all_verilog_filenames(abspath=True)
+        single_src_dir = make_build_dir("rtlsim_" + self.onnx_node.name + "_")
+        tmp_build_dir = make_build_dir("pyverilator_" + self.onnx_node.name + "_")
+        target_file = single_src_dir + "/" + self.get_verilog_top_module_name() + ".v"
+        make_single_source_file(verilog_files, target_file)
+
         # build the Verilator emu library
         sim = PyVerilator.build(
-            verilog_files,
-            build_dir=make_build_dir("pyverilator_" + self.onnx_node.name + "_"),
-            verilog_path=verilog_paths,
+            self.get_verilog_top_module_name() + ".v",
+            build_dir=tmp_build_dir,
+            verilog_path=[single_src_dir],
             trace_depth=get_rtlsim_trace_depth(),
             top_module_name=self.get_verilog_top_module_name(),
         )
@@ -288,9 +310,9 @@ class HLSCustomOp(CustomOp):
         self.code_gen_dict["$PROJECTNAME$"] = ["project_{}".format(node.name)]
         self.code_gen_dict["$HWSRCDIR$"] = [code_gen_dir]
         self.code_gen_dict["$FPGAPART$"] = [fpgapart]
-        self.code_gen_dict["$FINNHLSLIBDIR$"] = ["/workspace/finn-hlslib"]
         self.code_gen_dict["$TOPFXN$"] = [node.name]
         self.code_gen_dict["$CLKPERIOD$"] = [str(clk)]
+        self.code_gen_dict["$DEFAULT_DIRECTIVES$"] = self.ipgen_default_directives()
         self.code_gen_dict["$EXTRA_DIRECTIVES$"] = self.ipgen_extra_directives()
         self.code_gen_dict["$RELAX_II_FOR_TIMING$"] = [str(relax_ii_for_timing)]
 
@@ -306,13 +328,24 @@ class HLSCustomOp(CustomOp):
         f.close()
         self.code_gen_dict.clear()
 
+    def ipgen_default_directives(self):
+        """Return list of default HLS synthesis directives"""
+
+        default_directives = [
+            "set_param hls.enable_hidden_option_error false",
+            "config_compile -disable_unroll_code_size_check -pipeline_style flp",
+            "config_interface -m_axi_addr64",
+            "config_rtl -module_auto_prefix",
+            "config_rtl -deadlock_detection none",
+        ]
+        return default_directives
+
     def ipgen_extra_directives(self):
         "Return a list of extra tcl directives for HLS synthesis."
         return []
 
     def ipgen_singlenode_code(self):
-        """Builds the bash script for ip generation using the CallHLS from
-        finn.util.hls."""
+        """Builds the bash script for IP generation using the CallHLS utility."""
         node = self.onnx_node
         code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         builder = CallHLS()
@@ -370,39 +403,54 @@ class HLSCustomOp(CustomOp):
         builder = CppBuilder()
         # to enable additional debug features please uncommand the next line
         # builder.append_includes("-DDEBUG")
-        builder.append_includes("-I/workspace/finn/src/finn/qnn-data/cpp")
-        builder.append_includes("-I/workspace/cnpy/")
-        builder.append_includes("-I/workspace/finn-hlslib")
-        builder.append_includes("-I{}/include".format(os.environ["VIVADO_PATH"]))
-        builder.append_includes("--std=c++11")
+        builder.append_includes("-I$FINN_ROOT/src/finn/qnn-data/cpp")
+        builder.append_includes("-I$FINN_ROOT/deps/cnpy/")
+        builder.append_includes("-I$FINN_ROOT/deps/finn-hlslib")
+        builder.append_includes("-I$FINN_ROOT/custom_hls")
+        builder.append_includes("-I{}/include".format(os.environ["HLS_PATH"]))
+        builder.append_includes("--std=c++14")
         builder.append_includes("-O3")
         builder.append_sources(code_gen_dir + "/*.cpp")
-        builder.append_sources("/workspace/cnpy/cnpy.cpp")
+        builder.append_sources("$FINN_ROOT/deps/cnpy/cnpy.cpp")
         builder.append_includes("-lz")
         builder.set_executable_path(code_gen_dir + "/node_model")
         builder.build(code_gen_dir)
         self.set_nodeattr("executable_path", builder.executable_path)
 
-    def dynamic_input_to_npy(self, context, count):
+    def dynamic_input_to_npy(self, context, count, target_dir=""):
         """Saves input (given context) into .npy files.
 
         Count indicates the number of inputs that have to be saved."""
         node = self.onnx_node
-        code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
-        if code_gen_dir == "":
-            raise Exception(
+        if target_dir == "":
+            code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
+            if code_gen_dir == "":
+                raise Exception(
+                    """
+    Found no codegen dir for this node, did you run the prepare_cppsim transformation?
                 """
-Found no codegen dir for this node, did you run the prepare_cppsim transformation?
-            """
-            )
+                )
+            target_dir = code_gen_dir
         # create a npy file for each input of the node (in_ind is input index)
         # assuming dynamic inputs start from 0
         for in_ind in range(count):
             current_input_name = node.input[in_ind]
-            # make copy before saving array
-            input_array = context[current_input_name].copy()
+            input_array = context[current_input_name]
+            if in_ind == 0:
+                expected_inp_shape = self.get_folded_input_shape()
+                idt = self.get_input_datatype()
+            else:
+                expected_inp_shape = self.get_folded_input_shape(in_ind)
+                idt = self.get_input_datatype(in_ind)
+            reshaped_input = input_array.reshape(expected_inp_shape)
+            if idt == DataType["BIPOLAR"]:
+                # store bipolar activations as binary
+                reshaped_input = (reshaped_input + 1) / 2
+            # make copy before saving the array
+            reshaped_input = reshaped_input.copy()
             np.save(
-                os.path.join(code_gen_dir, "input_{}.npy".format(in_ind)), input_array
+                os.path.join(target_dir, "input_{}.npy".format(in_ind)),
+                reshaped_input,
             )
 
     def npy_to_dynamic_output(self, context):
@@ -411,7 +459,8 @@ Found no codegen dir for this node, did you run the prepare_cppsim transformatio
         node = self.onnx_node
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         output = np.load("{}/output.npy".format(code_gen_dir))
-        context[node.output[0]] = output
+        exp_shape = self.get_normal_output_shape()
+        context[node.output[0]] = output.reshape(exp_shape)
 
     def npy_to_dynamic_outputs(self, context, npy_list):
         """Reads the output from .npy files generated from cppsim and places
@@ -422,7 +471,11 @@ Found no codegen dir for this node, did you run the prepare_cppsim transformatio
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         for i in range(len(npy_list)):
             output = np.load("{}/{}".format(code_gen_dir, npy_list[i]))
-            context[node.output[i]] = output
+            if i == 0:
+                exp_shape = self.get_normal_output_shape()
+            else:
+                exp_shape = self.get_normal_output_shape(i)
+            context[node.output[i]] = output.reshape(exp_shape)
 
     def exec_precompiled_singlenode_model(self):
         """Executes precompiled executable."""
@@ -450,6 +503,12 @@ compilation transformations?
         sim.io.ap_clk = 1
         sim.io.ap_clk = 0
 
+    def hls_sname(self):
+        """Get the naming convention used by Vitis HLS for stream signals
+        Example: the TDATA for a stream called "out" would be out_V_TDATA.
+        """
+        return "V"
+
     def rtlsim(self, sim, inp, inp2=None):
         """Runs the pyverilator simulation by passing the input values to the simulation,
         toggle the clock and observing the execution time. Function contains also an
@@ -463,7 +522,18 @@ compilation transformations?
             sim.start_vcd_trace(trace_file)
         inputs = inp
         outputs = []
-        sim.io.out_V_V_TREADY = 1
+        sname = self.hls_sname()
+        o_ready = "out_" + sname + "_TREADY"
+        o_valid = "out_" + sname + "_TVALID"
+        o_data = "out_" + sname + "_TDATA"
+        in0_ready = "in0_" + sname + "_TREADY"
+        in0_valid = "in0_" + sname + "_TVALID"
+        in0_data = "in0_" + sname + "_TDATA"
+        in1_ready = "in1_" + sname + "_TREADY"
+        in1_valid = "in1_" + sname + "_TVALID"
+        in1_data = "in1_" + sname + "_TDATA"
+
+        sim.io[o_ready] = 1
 
         # observe if output is completely calculated
         # observation_count will contain the number of cycles the calculation ran
@@ -478,19 +548,19 @@ compilation transformations?
         liveness_threshold = pyverilate_get_liveness_threshold_cycles()
 
         while not (output_observed):
-            sim.io.in0_V_V_TVALID = 1 if len(inputs) > 0 else 0
-            sim.io.in0_V_V_TDATA = inputs[0] if len(inputs) > 0 else 0
-            if sim.io.in0_V_V_TREADY == 1 and sim.io.in0_V_V_TVALID == 1:
+            sim.io[in0_valid] = 1 if len(inputs) > 0 else 0
+            sim.io[in0_data] = inputs[0] if len(inputs) > 0 else 0
+            if sim.io[in0_ready] == 1 and sim.io[in0_valid] == 1:
                 inputs = inputs[1:]
 
             if inp2 is not None:
-                sim.io.in1_V_V_TVALID = 1 if len(inp2) > 0 else 0
-                sim.io.in1_V_V_TDATA = inp2[0] if len(inp2) > 0 else 0
-                if sim.io.in1_V_V_TREADY == 1 and sim.io.in1_V_V_TVALID == 1:
+                sim.io[in1_valid] = 1 if len(inp2) > 0 else 0
+                sim.io[in1_data] = inp2[0] if len(inp2) > 0 else 0
+                if sim.io[in1_ready] == 1 and sim.io[in1_valid] == 1:
                     inp2 = inp2[1:]
 
-            if sim.io.out_V_V_TVALID == 1 and sim.io.out_V_V_TREADY == 1:
-                outputs = outputs + [sim.io.out_V_V_TDATA]
+            if sim.io[o_valid] == 1 and sim.io[o_ready] == 1:
+                outputs = outputs + [sim.io[o_data]]
             sim.io.ap_clk = 1
             sim.io.ap_clk = 0
 
@@ -522,11 +592,21 @@ compilation transformations?
     def rtlsim_multi_io(self, sim, io_dict):
         "Run rtlsim for this node, supports multiple i/o streams."
 
+        # signal name
+        sname = "_" + self.hls_sname() + "_"
+
         trace_file = self.get_nodeattr("rtlsim_trace")
         if trace_file == "default":
             trace_file = self.onnx_node.name + ".vcd"
         num_out_values = self.get_number_output_values()
-        total_cycle_count = rtlsim_multi_io(sim, io_dict, num_out_values, trace_file)
+        total_cycle_count = rtlsim_multi_io(
+            sim,
+            io_dict,
+            num_out_values,
+            trace_file=trace_file,
+            sname=sname,
+            liveness_threshold=pyverilate_get_liveness_threshold_cycles(),
+        )
         self.set_nodeattr("cycles_rtlsim", total_cycle_count)
 
     def execute_node(self, context, graph):
@@ -577,7 +657,7 @@ compilation transformations?
         be filled by every node.
 
         var: makes it possible to reuse the function for different c++ code generation.
-        I.e. if set to "ipgen" in StreamingFCLayer_Batch additional PRAGMA defines are
+        I.e. if set to "ipgen" in MatrixVectorActivation additional PRAGMA defines are
         added."""
         pass
 
@@ -627,40 +707,48 @@ compilation transformations?
         HLSCustomOp class but has to be filled by every node."""
         pass
 
-    def get_normal_input_shape(self):
+    def get_input_datatype(self, ind=0):
+        """Returns FINN DataType of input stream ind."""
+        raise Exception("get_input_datatype not implemented for this op")
+
+    def get_output_datatype(self, ind=0):
+        """Returns FINN DataType of output stream ind."""
+        raise Exception("get_output_datatype not implemented for this op")
+
+    def get_normal_input_shape(self, ind=0):
         """Returns normal input shape if implemented."""
         raise Exception("get_normal_input_shape not implemented for this op")
 
-    def get_normal_output_shape(self):
+    def get_normal_output_shape(self, ind=0):
         """Returns folded output shape if implemented."""
         raise Exception("get_normal_output_shape not implemented for this op")
 
-    def get_folded_input_shape(self):
+    def get_folded_input_shape(self, ind=0):
         """Returns folded input shape (according to synapse folding), if implemented."""
         raise Exception("get_folded_input_shape not implemented for this op")
 
-    def get_folded_output_shape(self):
+    def get_folded_output_shape(self, ind=0):
         """Returns folded output shape (according to neuron folding), if implemented."""
         raise Exception("get_folded_output_shape not implemented for this op")
 
-    def get_instream_width(self):
+    def get_instream_width(self, ind=0):
         """Returns input stream width, if implemented."""
         raise Exception("get_instream_width not implemented for this op")
 
-    def get_outstream_width(self):
+    def get_outstream_width(self, ind=0):
         """Returns output stream width, if implemented."""
         raise Exception("get_outstream_width not implemented for this op")
 
-    def get_instream_width_padded(self):
+    def get_instream_width_padded(self, ind=0):
         """Returns input stream width padded to a multiple of 8. This is required
         by the AXI Stream spec."""
-        in_width = self.get_instream_width()
+        in_width = self.get_instream_width(ind=ind)
         return roundup_to_integer_multiple(in_width, 8)
 
-    def get_outstream_width_padded(self):
+    def get_outstream_width_padded(self, ind=0):
         """Returns output stream width padded to a multiple of 8. This is required
         by the AXI Stream spec."""
-        out_width = self.get_outstream_width()
+        out_width = self.get_outstream_width(ind=ind)
         return roundup_to_integer_multiple(out_width, 8)
 
     def get_ap_int_max_w(self):
@@ -673,3 +761,119 @@ compilation transformations?
             "AP_INT_MAX_W=%d is larger than allowed maximum of 32768" % ret
         )
         return ret
+
+    def derive_characteristic_fxns(self, period, override_rtlsim_dict=None):
+        """Return the unconstrained characteristic functions for this node."""
+        # ensure rtlsim is ready
+        assert self.get_nodeattr("rtlsim_so") != "", (
+            "rtlsim not ready for " + self.onnx_node.name
+        )
+        if self.get_nodeattr("io_chrc_period") > 0:
+            warnings.warn(
+                "Skipping node %s: already has FIFO characteristic"
+                % self.onnx_node.name
+            )
+            return
+        exp_cycles = self.get_exp_cycles()
+        n_inps = np.prod(self.get_folded_input_shape()[:-1])
+        n_outs = np.prod(self.get_folded_output_shape()[:-1])
+        if exp_cycles == 0:
+            # try to come up with an optimistic estimate
+            exp_cycles = min(n_inps, n_outs)
+        assert (
+            exp_cycles <= period
+        ), "Period %d too short to characterize %s : expects min %d cycles" % (
+            period,
+            self.onnx_node.name,
+            exp_cycles,
+        )
+        sim = self.get_rtlsim()
+        # signal name
+        sname = "_" + self.hls_sname() + "_"
+        if override_rtlsim_dict is not None:
+            io_dict = override_rtlsim_dict
+        else:
+            io_dict = {
+                "inputs": {
+                    "in0": [0 for i in range(n_inps)],
+                },
+                "outputs": {"out": []},
+            }
+
+        # extra dicts to keep track of cycle-by-cycle transaction behavior
+        # note that we restrict key names to filter out weight streams etc
+        txns_in = {key: [] for (key, value) in io_dict["inputs"].items() if "in" in key}
+        txns_out = {
+            key: [] for (key, value) in io_dict["outputs"].items() if "out" in key
+        }
+
+        def monitor_txns(sim_obj):
+            for inp in txns_in:
+                in_ready = _read_signal(sim, inp + sname + "TREADY") == 1
+                in_valid = _read_signal(sim, inp + sname + "TVALID") == 1
+                if in_ready and in_valid:
+                    txns_in[inp].append(1)
+                else:
+                    txns_in[inp].append(0)
+            for outp in txns_out:
+                if (
+                    _read_signal(sim, outp + sname + "TREADY") == 1
+                    and _read_signal(sim, outp + sname + "TVALID") == 1
+                ):
+                    txns_out[outp].append(1)
+                else:
+                    txns_out[outp].append(0)
+
+        reset_rtlsim(sim)
+        total_cycle_count = rtlsim_multi_io(
+            sim,
+            io_dict,
+            n_outs,
+            sname=sname,
+            liveness_threshold=period,
+            hook_preclk=monitor_txns,
+        )
+        assert (
+            total_cycle_count <= period
+        ), """Total cycle count from rtl simulation is higher than
+            specified period, please set the period higher than {}""".format(
+            total_cycle_count
+        )
+        self.set_nodeattr("io_chrc_period", period)
+
+        def accumulate_char_fxn(chrc):
+            p = len(chrc)
+            ret = []
+            for t in range(2 * p):
+                if t == 0:
+                    ret.append(chrc[0])
+                else:
+                    ret.append(ret[-1] + chrc[t % p])
+            return np.asarray(ret, dtype=np.int32)
+
+        all_txns_in = np.empty((len(txns_in.keys()), 2 * period), dtype=np.int32)
+        all_txns_out = np.empty((len(txns_out.keys()), 2 * period), dtype=np.int32)
+        all_pad_in = []
+        all_pad_out = []
+        for in_idx, in_strm_nm in enumerate(txns_in.keys()):
+            txn_in = txns_in[in_strm_nm]
+            if len(txn_in) < period:
+                pad_in = period - len(txn_in)
+                txn_in += [0 for x in range(pad_in)]
+            txn_in = accumulate_char_fxn(txn_in)
+            all_txns_in[in_idx, :] = txn_in
+            all_pad_in.append(pad_in)
+
+        for out_idx, out_strm_nm in enumerate(txns_out.keys()):
+            txn_out = txns_out[out_strm_nm]
+            if len(txn_out) < period:
+                pad_out = period - len(txn_out)
+                txn_out += [0 for x in range(pad_out)]
+            txn_out = accumulate_char_fxn(txn_out)
+            all_txns_out[out_idx, :] = txn_out
+            all_pad_out.append(pad_out)
+
+        self.set_nodeattr("io_chrc_in", all_txns_in)
+        self.set_nodeattr("io_chrc_out", all_txns_out)
+        self.set_nodeattr("io_chrc_pads_in", all_pad_in)
+        self.set_nodeattr("io_chrc_pads_out", all_pad_out)

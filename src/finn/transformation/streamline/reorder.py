@@ -27,20 +27,19 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
+import qonnx.core.data_layout as DataLayout
 import warnings
-from onnx import helper as oh
 from onnx import TensorProto
-
-from finn.transformation.base import Transformation
-import finn.core.data_layout as DataLayout
-from finn.transformation.infer_shapes import InferShapes
-from finn.transformation.infer_datatypes import InferDataTypes
-from finn.transformation.infer_data_layouts import InferDataLayouts
-from finn.core.datatype import DataType
-from finn.core.onnx_exec import execute_node
-from finn.util.basic import get_by_name
-from finn.custom_op.registry import getCustomOp
-from finn.transformation.general import SortGraph
+from onnx import helper as oh
+from qonnx.core.datatype import DataType
+from qonnx.core.onnx_exec import execute_node
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.base import Transformation
+from qonnx.transformation.general import SortGraph
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.util.basic import get_by_name
 
 
 class MoveAddPastMul(Transformation):
@@ -408,16 +407,16 @@ class MoveMulPastDWConv(Transformation):
                         # rewire mul input to be conv input
                         conv_node.input[0] = start_name
                         model.set_tensor_shape(start_name, conv_in_shape)
-                        model.set_tensor_datatype(start_name, DataType.FLOAT32)
+                        model.set_tensor_datatype(start_name, DataType["FLOAT32"])
                         # use old conv input tensor as conv output
                         conv_node.output[0] = conv_in_name
                         model.set_tensor_shape(conv_in_name, conv_out_shape)
-                        model.set_tensor_datatype(conv_in_name, DataType.FLOAT32)
+                        model.set_tensor_datatype(conv_in_name, DataType["FLOAT32"])
                         # use new conv output as new mul node input
                         mul_node.input[0] = conv_in_name
                         # use old conv output as new mul node output
                         mul_node.output[0] = conv_out_name
-                        model.set_tensor_datatype(conv_out_name, DataType.FLOAT32)
+                        model.set_tensor_datatype(conv_out_name, DataType["FLOAT32"])
                         # move mul node past conv node
                         graph.node.remove(mul_node)
                         graph.node.insert(node_ind, mul_node)
@@ -482,16 +481,16 @@ class MoveMulPastMaxPool(Transformation):
                         # rewire mul input to be maxpool input
                         maxpool_node.input[0] = start_name
                         model.set_tensor_shape(start_name, maxpool_in_shape)
-                        model.set_tensor_datatype(start_name, DataType.FLOAT32)
+                        model.set_tensor_datatype(start_name, DataType["FLOAT32"])
                         # use old maxpool input tensor as maxpool output
                         maxpool_node.output[0] = maxpool_in_name
                         model.set_tensor_shape(maxpool_in_name, maxpool_out_shape)
-                        model.set_tensor_datatype(maxpool_in_name, DataType.FLOAT32)
+                        model.set_tensor_datatype(maxpool_in_name, DataType["FLOAT32"])
                         # use new maxpool output as new mul node input
                         mul_node.input[0] = maxpool_in_name
                         # use old maxpool output as new mul node output
                         mul_node.output[0] = maxpool_out_name
-                        model.set_tensor_datatype(maxpool_out_name, DataType.FLOAT32)
+                        model.set_tensor_datatype(maxpool_out_name, DataType["FLOAT32"])
                         # move mul node past maxpool node
                         graph.node.remove(mul_node)
                         graph.node.insert(node_ind, mul_node)
@@ -554,6 +553,8 @@ class MoveLinearPastEltwiseAdd(Transformation):
                 # Other transform should handle that
                 if prod0 is None or prod1 is None or (prod0 == prod1):
                     continue
+                if len(prod0.input) < 2 or len(prod1.input) < 2:
+                    continue
                 init0 = model.get_initializer(prod0.input[1])
                 init1 = model.get_initializer(prod1.input[1])
                 # if either initializer is None, skip
@@ -594,11 +595,17 @@ class MoveScalarLinearPastInvariants(Transformation):
         nodes = [n for n in graph.node]
         for n in nodes:
             node_ind += 1
+            is_nearest_neighbor_resample = False
+            if n.op_type == "Upsample" or n.op_type == "Resize":
+                # Extract mode and scales and input shape
+                mode = get_by_name(n.attribute, "mode").s.decode("ascii")
+                is_nearest_neighbor_resample = mode == "nearest"
             if (
                 n.op_type == "GlobalAveragePool"
                 or n.op_type == "Reshape"
                 or n.op_type == "Transpose"
                 or n.op_type == "Flatten"
+                or is_nearest_neighbor_resample
             ):
                 in0 = n.input[0]
                 if in0 is None:
@@ -617,6 +624,10 @@ class MoveScalarLinearPastInvariants(Transformation):
                     # if initializer is not scalar, skip
                     if np.prod(init0.shape) != 1:
                         continue
+                    # Flatten input if required
+                    if len(init0.shape) > 0:
+                        init0 = init0.flatten()[0]
+                        model.set_initializer(prod0.input[1], init0)
                     # move prod0 from input to output,
                     old_prod0_in = prod0.input[0]
                     old_prod0_out = prod0.output[0]
@@ -632,7 +643,7 @@ class MoveScalarLinearPastInvariants(Transformation):
                     model.set_tensor_shape(n.output[0], out_shape)
                     model.set_tensor_shape(prod0.output[0], out_shape)
                     model.set_tensor_datatype(prod0.output[0], scalar_op_odt)
-                    model.set_tensor_datatype(n.output[0], DataType.FLOAT32)
+                    model.set_tensor_datatype(n.output[0], DataType["FLOAT32"])
                     graph.node.remove(prod0)
                     graph.node.insert(node_ind - 1, prod0)
                     graph_modified = True
@@ -645,7 +656,8 @@ class MoveScalarLinearPastInvariants(Transformation):
 
 
 class MakeMaxPoolNHWC(Transformation):
-    """Convert (MaxPool, NHWCTranpose) into (MaxPoolNHWC)."""
+    """Convert (MaxPool, NHWCTranspose) into (NHWCTranspose, MaxPoolNHWC)
+    and (NCHWTranspose, MaxPool) into (MaxPoolNHWC, NCHWTranspose)."""
 
     def apply(self, model):
         graph = model.graph
@@ -655,11 +667,119 @@ class MakeMaxPoolNHWC(Transformation):
             node_ind += 1
             if n.op_type == "MaxPool":
                 consumer = model.find_consumer(n.output[0])
+                producer = model.find_producer(n.input[0])
                 if consumer is not None and consumer.op_type == "Transpose":
                     perms = list(get_by_name(consumer.attribute, "perm").ints)
                     if perms == [0, 2, 3, 1]:
+                        ceil_mode = get_by_name(n.attribute, "ceil_mode")
+                        if ceil_mode is not None:
+                            ceil_mode = ceil_mode.i
+                        else:
+                            ceil_mode = (
+                                0  # default to ceil_mode=0 (equivalent to np.floor)
+                            )
                         n.op_type = "MaxPoolNHWC"
-                        n.domain = "finn.custom_op.general"
+                        n.domain = "qonnx.custom_op.general"
+                        start_name = n.input[0]
+                        mid_name = consumer.input[0]
+                        end_name = consumer.output[0]
+                        (b, c, hi, wi) = model.get_tensor_shape(start_name)
+                        (b, c, ho, wo) = model.get_tensor_shape(mid_name)
+                        consumer.input[0] = start_name
+                        consumer.output[0] = mid_name
+                        n.input[0] = mid_name
+                        n.output[0] = end_name
+                        model.set_tensor_shape(mid_name, (b, hi, wi, c))
+                        model.set_tensor_shape(end_name, (b, ho, wo, c))
+                        getCustomOp(n).set_nodeattr("ceil_mode", ceil_mode)
+                        graph.node.remove(consumer)
+                        graph.node.insert(node_ind - 1, consumer)
+                        graph_modified = True
+                elif producer is not None and producer.op_type == "Transpose":
+                    perms = list(get_by_name(producer.attribute, "perm").ints)
+                    if perms == [0, 3, 1, 2]:
+                        ceil_mode = get_by_name(n.attribute, "ceil_mode")
+                        if ceil_mode is not None:
+                            ceil_mode = ceil_mode.i
+                        else:
+                            ceil_mode = (
+                                0  # default to ceil_mode=0 (equivalent to np.floor)
+                            )
+                        n.op_type = "MaxPoolNHWC"
+                        n.domain = "qonnx.custom_op.general"
+                        start_name = producer.input[0]
+                        mid_name = n.input[0]
+                        end_name = n.output[0]
+                        (b, hi, wi, c) = model.get_tensor_shape(start_name)
+                        (b, c, ho, wo) = model.get_tensor_shape(end_name)
+                        producer.input[0] = mid_name
+                        producer.output[0] = end_name
+                        n.input[0] = start_name
+                        n.output[0] = mid_name
+                        model.set_tensor_shape(mid_name, (b, ho, wo, c))
+                        model.set_tensor_shape(end_name, (b, c, ho, wo))
+                        getCustomOp(n).set_nodeattr("ceil_mode", ceil_mode)
+                        graph.node.remove(producer)
+                        graph.node.insert(node_ind, producer)
+                        graph_modified = True
+        return (model, graph_modified)
+
+
+class MakeScaleResizeNHWC(Transformation):
+    """
+    Converts the inputs and outputs for all scales Resize and Upsample nodes
+    from NCHW to NHWC.
+    """
+
+    def apply(self, model):
+        graph = model.graph
+        node_ind = 0
+        for n in graph.node:
+            node_ind += 1
+            if n.op_type == "Upsample" or n.op_type == "Resize":
+                if model.get_tensor_layout(n.input[0]) != DataLayout.NCHW:
+                    warnings.warn(
+                        "%s: Input not NCHW. Can't operate transformation on node."
+                        % n.name
+                    )
+                    continue
+                consumer = model.find_consumer(n.output[0])
+                producer = model.find_producer(n.input[0])
+                if n.op_type == "Upsample":
+                    scales_ind = 1
+                else:
+                    scales_ind = 2
+                if producer is not None and producer.op_type == "Transpose":
+                    perms = list(get_by_name(producer.attribute, "perm").ints)
+                    if perms == [0, 3, 1, 2]:
+                        old_value = model.get_initializer(n.input[scales_ind])
+                        new_value = np.array(
+                            [old_value[idx] for idx in (0, 2, 3, 1)],
+                            dtype=np.dtype("float32"),
+                        )
+                        model.set_initializer(n.input[scales_ind], new_value)
+                        start_name = producer.input[0]
+                        mid_name = n.input[0]
+                        end_name = n.output[0]
+                        (b, hi, wi, c) = model.get_tensor_shape(start_name)
+                        (b, c, ho, wo) = model.get_tensor_shape(end_name)
+                        producer.input[0] = mid_name
+                        producer.output[0] = end_name
+                        n.input[0] = start_name
+                        n.output[0] = mid_name
+                        model.set_tensor_shape(mid_name, (b, ho, wo, c))
+                        model.set_tensor_shape(end_name, (b, c, ho, wo))
+                        graph.node.remove(producer)
+                        graph.node.insert(node_ind, producer)
+                elif consumer is not None and consumer.op_type == "Transpose":
+                    perms = list(get_by_name(consumer.attribute, "perm").ints)
+                    if perms == [0, 2, 3, 1]:
+                        old_value = model.get_initializer(n.input[scales_ind])
+                        new_value = np.array(
+                            [old_value[idx] for idx in (0, 2, 3, 1)],
+                            dtype=np.dtype("float32"),
+                        )
+                        model.set_initializer(n.input[scales_ind], new_value)
                         start_name = n.input[0]
                         mid_name = consumer.input[0]
                         end_name = consumer.output[0]
@@ -673,8 +793,7 @@ class MakeMaxPoolNHWC(Transformation):
                         model.set_tensor_shape(end_name, (b, ho, wo, c))
                         graph.node.remove(consumer)
                         graph.node.insert(node_ind - 1, consumer)
-                        graph_modified = True
-        return (model, graph_modified)
+        return (model, False)
 
 
 class MoveOpPastFork(Transformation):
@@ -682,9 +801,10 @@ class MoveOpPastFork(Transformation):
     can be merged with nodes in the branches
     """
 
-    def __init__(self, op_name_list):
+    def __init__(self, op_name_list, get_attrs_fxn=lambda x: {}):
         super().__init__()
         self.ops_to_move = op_name_list
+        self.get_attrs_fxn = get_attrs_fxn
 
     def apply(self, model):
         graph = model.graph
@@ -701,13 +821,15 @@ class MoveOpPastFork(Transformation):
 
                 # Restrict this transform to operations with constant parameters
                 # Assuming parameters is in input 1
-                op_init_param = model.get_initializer(n.input[1])
-                if op_init_param is None:
-                    continue
+                if len(n.input) > 1:
+                    op_init_param = model.get_initializer(n.input[1])
+                else:
+                    op_init_param = None
 
                 # Check case when branches are empty and go
                 # to the same node
                 consumers = model.find_consumers(n.output[0])
+                assert len(consumers) > 1, "Must have >1 consumer"
                 unique_consumer = True
                 for consum_node in consumers[1:]:
                     if consumers[0] != consum_node:
@@ -719,16 +841,20 @@ class MoveOpPastFork(Transformation):
 
                 for consumer_node in consumers[1:]:
                     # create new node
-                    new_param_name = model.make_new_valueinfo_name()
                     new_output_tensor_name = model.make_new_valueinfo_name()
+                    if op_init_param is None:
+                        new_inp_list = [n.input[0]]
+                    else:
+                        new_param_name = model.make_new_valueinfo_name()
+                        new_inp_list = [n.input[0], new_param_name]
+                        model.set_initializer(new_param_name, op_init_param)
+                    attrs = self.get_attrs_fxn(n)
+                    # TODO use copy of original node instead to get attrs?
                     new_node = oh.make_node(
-                        n.op_type,
-                        [n.input[0], new_param_name],
-                        [new_output_tensor_name],
+                        n.op_type, new_inp_list, [new_output_tensor_name], **attrs
                     )
                     graph.node.insert(node_ind, new_node)
                     node_ind += 1
-                    model.set_initializer(new_param_name, op_init_param)
 
                     # change consumer input tensor
                     graph.node.remove(consumer_node)
@@ -762,6 +888,13 @@ class MoveMulPastFork(MoveOpPastFork):
 class MoveLinearPastFork(MoveOpPastFork):
     def __init__(self):
         super().__init__(["Add", "Mul"])
+
+
+class MoveTransposePastFork(MoveOpPastFork):
+    def __init__(self):
+        super().__init__(
+            ["Transpose"], lambda x: {"perm": get_by_name(x.attribute, "perm").ints}
+        )
 
 
 class MoveMaxPoolPastMultiThreshold(Transformation):

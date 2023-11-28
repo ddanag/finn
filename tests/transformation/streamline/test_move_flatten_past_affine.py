@@ -28,19 +28,21 @@
 import pytest
 
 import numpy as np
+import qonnx.core.data_layout as DataLayout
 from onnx import TensorProto, helper
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.general import GiveReadableTensorNames, GiveUniqueNodeNames
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
-from finn.core.modelwrapper import ModelWrapper
-from finn.core.datatype import DataType
-import finn.core.data_layout as DataLayout
-from finn.util.basic import gen_finn_dt_tensor
-from finn.transformation.infer_shapes import InferShapes
-from finn.transformation.infer_datatypes import InferDataTypes
-from finn.transformation.infer_data_layouts import InferDataLayouts
-from finn.transformation.general import GiveUniqueNodeNames, GiveReadableTensorNames
-from finn.transformation.streamline.reorder import MoveFlattenPastAffine
 import finn.core.onnx_exec as oxe
+from finn.transformation.streamline.reorder import MoveFlattenPastAffine
 
+
+@pytest.mark.streamline
 # data layout
 @pytest.mark.parametrize("data_layout", [DataLayout.NHWC, DataLayout.NCHW])
 # batch size
@@ -72,18 +74,18 @@ def test_move_flatten_past_affine(data_layout, batch_size):
         value_info=[a0, a1, a2],
     )
 
-    model = helper.make_model(graph, producer_name="move_reshape_model")
+    model = qonnx_make_model(graph, producer_name="move_reshape_model")
     model = ModelWrapper(model)
 
     # initialize values
-    a0_values = gen_finn_dt_tensor(DataType.TERNARY, [1024, 1000])
+    a0_values = gen_finn_dt_tensor(DataType["TERNARY"], [1024, 1000])
     model.set_initializer("a0", a0_values)
     a1_values = np.random.uniform(low=0.1, high=0.99, size=(1)).astype(np.float32)
     model.set_initializer("a1", a1_values)
     a2_values = np.random.uniform(low=-1, high=1, size=(1000)).astype(np.float32)
     model.set_initializer("a2", a2_values)
 
-    model.set_tensor_datatype("inp", DataType.INT2)
+    model.set_tensor_datatype("inp", DataType["INT2"])
     model.set_tensor_layout("inp", data_layout)
     model = model.transform(InferShapes())
     model = model.transform(InferDataTypes())
@@ -92,7 +94,7 @@ def test_move_flatten_past_affine(data_layout, batch_size):
     model = model.transform(GiveReadableTensorNames())
 
     # compare execution before and after transformation
-    inp_values = gen_finn_dt_tensor(DataType.INT2, ishape)
+    inp_values = gen_finn_dt_tensor(DataType["INT2"], ishape)
     idict = {model.graph.input[0].name: inp_values}
     model_transformed = model.transform(MoveFlattenPastAffine())
     assert oxe.compare_execution(model, model_transformed, idict)

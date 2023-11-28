@@ -26,13 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
-
 import numpy as np
+import os
 import warnings
-from finn.core.datatype import DataType
+from qonnx.core.datatype import DataType
+
 from finn.custom_op.fpgadataflow.hlscustomop import HLSCustomOp
-from onnx import TensorProto, helper
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 
 
@@ -43,21 +42,24 @@ class AddStreams_Batch(HLSCustomOp):
         super().__init__(onnx_node)
 
     def get_nodeattr_types(self):
-        my_attrs = {
-            "NumChannels": ("i", True, ""),
-            "PE": ("i", True, ""),
-            # FINN DataTypes for inputs; output datatype inferred from input
-            "inputDataType": ("s", True, ""),
-            # number of input vectors, examples:
-            # [1] is a single vector (like a FC layer with batch=1)
-            # [4] is four vectors (like a FC layer with batch=4)
-            # [1, 4, 4] is four * four vectors (like a conv layer with batch=1)
-            "numInputVectors": ("ints", False, [1]),
-        }
-        my_attrs.update(super().get_nodeattr_types())
+        my_attrs = super().get_nodeattr_types()
+        my_attrs.update(
+            {
+                "NumChannels": ("i", True, ""),
+                "PE": ("i", True, ""),
+                # FINN DataTypes for inputs; output datatype inferred from input
+                "inputDataType": ("s", True, ""),
+                # number of input vectors, examples:
+                # [1] is a single vector (like a FC layer with batch=1)
+                # [4] is four vectors (like a FC layer with batch=4)
+                # [1, 4, 4] is four * four vectors (like a conv layer with batch=1)
+                "numInputVectors": ("ints", False, [1]),
+                "inFIFODepths": ("ints", False, [2, 2]),
+            }
+        )
         return my_attrs
 
-    def get_normal_input_shape(self):
+    def get_normal_input_shape(self, ind=0):
         ich = self.get_nodeattr("NumChannels")
         vecs = list(self.get_nodeattr("numInputVectors"))
         ishape = tuple(vecs + [ich])
@@ -71,10 +73,10 @@ class AddStreams_Batch(HLSCustomOp):
         ishape = tuple(vecs + [ich // pe, pe])
         return ishape
 
-    def get_normal_output_shape(self):
+    def get_normal_output_shape(self, ind=0):
         return self.get_normal_input_shape()
 
-    def get_folded_output_shape(self):
+    def get_folded_output_shape(self, ind=0):
         return self.get_folded_input_shape()
 
     def make_shape_compatible_op(self, model):
@@ -84,19 +86,7 @@ class AddStreams_Batch(HLSCustomOp):
         assert ishape == exp_ishape, "Unexpected input1 shape."
         ishape = tuple(model.get_tensor_shape(self.onnx_node.input[1]))
         assert ishape == exp_ishape, "Unexpected input2 shape."
-        # implement tensor with correct shape
-        values = np.random.randn(*oshape).astype(np.float32)
-        return helper.make_node(
-            "Constant",
-            inputs=[],
-            outputs=[self.onnx_node.output[0]],
-            value=helper.make_tensor(
-                name="const_tensor",
-                data_type=TensorProto.FLOAT,
-                dims=values.shape,
-                vals=values.flatten().astype(float),
-            ),
-        )
+        return super().make_const_shape_op(oshape)
 
     def infer_node_datatype(self, model):
         node = self.onnx_node
@@ -137,11 +127,11 @@ class AddStreams_Batch(HLSCustomOp):
 
         return info_messages
 
-    def get_input_datatype(self):
+    def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""
         return DataType[self.get_nodeattr("inputDataType")]
 
-    def get_output_datatype(self):
+    def get_output_datatype(self, ind=0):
         """Returns FINN DataType of output."""
         # we need to set output datatype to the next larger int or uint
         # enhancement: consider specifying w/ explicit outputDataType attribute
@@ -152,14 +142,14 @@ class AddStreams_Batch(HLSCustomOp):
         else:
             return DataType.get_smallest_possible(2 * idt.max())
 
-    def get_instream_width(self):
+    def get_instream_width(self, ind=0):
         """Returns input stream width."""
         ibits = self.get_input_datatype().bitwidth()
         pe = self.get_nodeattr("PE")
         in_width = pe * ibits
         return in_width
 
-    def get_outstream_width(self):
+    def get_outstream_width(self, ind=0):
         """Returns output stream width."""
         obits = self.get_output_datatype().bitwidth()
         pe = self.get_nodeattr("PE")
@@ -179,7 +169,6 @@ class AddStreams_Batch(HLSCustomOp):
         exp_ishape = self.get_normal_input_shape()
         exp_oshape = self.get_normal_output_shape()
         folded_ishape = self.get_folded_input_shape()
-        folded_oshape = self.get_folded_output_shape()
 
         if mode == "cppsim":
             code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
@@ -224,9 +213,8 @@ class AddStreams_Batch(HLSCustomOp):
             # load output npy file
             super().npy_to_dynamic_output(context)
             assert (
-                context[node.output[0]].shape == folded_oshape
-            ), "cppsim did not produce expected folded output shape"
-            context[node.output[0]] = context[node.output[0]].reshape(*exp_oshape)
+                context[node.output[0]].shape == exp_oshape
+            ), "cppsim did not produce expected output shape"
         elif mode == "rtlsim":
             sim = self.get_rtlsim()
             nbits = self.get_instream_width()
@@ -353,14 +341,33 @@ class AddStreams_Batch(HLSCustomOp):
         ]
 
     def pragmas(self):
-        self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0"]
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=in1")
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out")
+        self.code_gen_dict["$PRAGMAS$"] = [
+            "#pragma HLS INTERFACE axis port=in0 name=in0_" + self.hls_sname()
+        ]
+        self.code_gen_dict["$PRAGMAS$"].append(
+            "#pragma HLS INTERFACE axis port=in1 name=in1_" + self.hls_sname()
+        )
+        self.code_gen_dict["$PRAGMAS$"].append(
+            "#pragma HLS INTERFACE axis port=out name=out_" + self.hls_sname()
+        )
         self.code_gen_dict["$PRAGMAS$"].append(
             "#pragma HLS INTERFACE ap_ctrl_none port=return"
         )
 
     def get_verilog_top_module_intf_names(self):
         intf_names = super().get_verilog_top_module_intf_names()
-        intf_names["s_axis"].append(("in1_V_V", self.get_instream_width_padded()))
+        sname = self.hls_sname()
+        swidth = self.get_instream_width_padded()
+        intf_names["s_axis"] = [(x + "_" + sname, swidth) for x in ["in0", "in1"]]
         return intf_names
+
+    def derive_characteristic_fxns(self, period):
+        n_inps = np.prod(self.get_folded_input_shape()[:-1])
+        io_dict = {
+            "inputs": {
+                "in0": [0 for i in range(n_inps)],
+                "in1": [0 for i in range(n_inps)],
+            },
+            "outputs": {"out": []},
+        }
+        super().derive_characteristic_fxns(period, override_rtlsim_dict=io_dict)

@@ -26,33 +26,35 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
+import pytest
+
+import brevitas.onnx as bo
 import csv
 import numpy as np
-import brevitas.onnx as bo
+import os
 import torch
-from finn.util.basic import make_build_dir
-from finn.util.pytorch import NormalizePreProc
-from finn.util.test import get_test_model_trained
-from finn.core.modelwrapper import ModelWrapper
-from finn.transformation.infer_shapes import InferShapes
-from finn.transformation.infer_data_layouts import InferDataLayouts
-from finn.transformation.fold_constants import FoldConstants
-from finn.transformation.general import RemoveStaticGraphInputs
-from finn.transformation.infer_datatypes import InferDataTypes
-from finn.transformation.general import (
+import torchvision.datasets as datasets
+import torchvision.transforms as transforms
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.fold_constants import FoldConstants
+from qonnx.transformation.general import (
     GiveReadableTensorNames,
     GiveUniqueNodeNames,
     GiveUniqueParameterTensors,
+    RemoveStaticGraphInputs,
 )
-from finn.transformation.merge_onnx_models import MergeONNXModels
-import finn.transformation.streamline.absorb as absorb
-from finn.transformation.insert_topk import InsertTopK
+from qonnx.transformation.infer_data_layouts import InferDataLayouts
+from qonnx.transformation.infer_datatypes import InferDataTypes
+from qonnx.transformation.infer_shapes import InferShapes
+from qonnx.transformation.insert_topk import InsertTopK
+from qonnx.transformation.merge_onnx_models import MergeONNXModels
+
 import finn.core.onnx_exec as oxe
+import finn.transformation.streamline.absorb as absorb
 import finn.util.imagenet as imagenet_util
-import pytest
-import torchvision.datasets as datasets
-import torchvision.transforms as transforms
+from finn.util.basic import make_build_dir
+from finn.util.pytorch import NormalizePreProc
+from finn.util.test import get_test_model_trained
 
 # normalization (preprocessing) settings for MobileNet-v1 w4a4
 mean = [0.485, 0.456, 0.406]
@@ -60,6 +62,7 @@ std = 0.226
 ch = 3
 
 
+@pytest.mark.brevitas_export
 def test_brevitas_mobilenet_preproc():
     if "IMAGENET_VAL_PATH" not in os.environ.keys():
         pytest.skip("Can't do validation without IMAGENET_VAL_PATH")
@@ -96,6 +99,7 @@ def test_brevitas_mobilenet_preproc():
         assert (finn_img == pyt_img).all()
 
 
+@pytest.mark.brevitas_export
 @pytest.mark.slow
 # marked as XFAIL until Brevitas export issues are resolved:
 # https://github.com/Xilinx/brevitas/issues/173

@@ -26,16 +26,19 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import finn.builder.build_dataflow as build
-import finn.builder.build_dataflow_config as build_cfg
+import pkg_resources as pk
+
+import pytest
+
 import os
 import shutil
-from finn.util.test import get_build_env, load_test_checkpoint_or_skip
-import pytest
-from finn.util.basic import make_build_dir
-import pkg_resources as pk
-import wget
 import subprocess
+import wget
+
+import finn.builder.build_dataflow as build
+import finn.builder.build_dataflow_config as build_cfg
+from finn.util.basic import make_build_dir
+from finn.util.test import get_build_env, load_test_checkpoint_or_skip
 
 target_clk_ns = 10
 build_kind = "zynq"
@@ -65,6 +68,7 @@ def get_checkpoint_name(step):
         return build_dir + "/end2end_ext_weights_%s.onnx" % (step)
 
 
+@pytest.mark.end2end
 def test_end2end_ext_weights_download():
     if not os.path.isfile(onnx_zip_local):
         wget.download(onnx_zip_url, out=onnx_zip_local)
@@ -75,6 +79,7 @@ def test_end2end_ext_weights_download():
 
 @pytest.mark.slow
 @pytest.mark.vivado
+@pytest.mark.end2end
 def test_end2end_ext_weights_build():
     model_file = get_checkpoint_name("download")
     load_test_checkpoint_or_skip(model_file)
@@ -85,6 +90,7 @@ def test_end2end_ext_weights_build():
     output_dir = make_build_dir("test_end2end_ext_weights_build")
     cfg = build.DataflowBuildConfig(
         output_dir=output_dir,
+        verbose=True,
         folding_config_file=folding_config_file,
         synth_clk_period_ns=target_clk_ns,
         board=build_env["board"],
@@ -107,6 +113,8 @@ def test_end2end_ext_weights_build():
 
 
 @pytest.mark.board
+@pytest.mark.end2end
+@pytest.mark.xfail
 def test_end2end_ext_weights_dataset():
     # make sure we have local copies of mnist dataset files
     subprocess.check_output(["mkdir", "-p", mnist_local])
@@ -122,6 +130,8 @@ def test_end2end_ext_weights_dataset():
     subprocess.check_output(rsync_dataset_cmd)
 
 
+@pytest.mark.end2end
+@pytest.mark.xfail
 def test_end2end_ext_weights_run_on_hw():
     build_env = get_build_env(build_kind, target_clk_ns)
     deploy_dir = get_checkpoint_name("build")

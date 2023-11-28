@@ -26,15 +26,18 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+import pytest
+
 from onnx import TensorProto, helper
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.transformation.general import GiveUniqueNodeNames
+from qonnx.util.basic import qonnx_make_model
 
 from finn.analysis.fpgadataflow.res_estimation import (
     res_estimation,
     res_estimation_complete,
 )
-from finn.core.datatype import DataType
-from finn.core.modelwrapper import ModelWrapper
-from finn.transformation.general import GiveUniqueNodeNames
 
 
 def check_two_dict_for_equality(dict1, dict2):
@@ -50,13 +53,14 @@ def check_two_dict_for_equality(dict1, dict2):
     return True
 
 
+@pytest.mark.fpgadataflow
 def test_res_estimate():
     mw = mh = 4
     simd = 1
     pe = 1
-    idt = DataType.INT2
-    wdt = DataType.INT2
-    odt = DataType.INT2
+    idt = DataType["INT2"]
+    wdt = DataType["INT2"]
+    odt = DataType["INT2"]
     actval = odt.min()
 
     inp = helper.make_tensor_value_info("inp", TensorProto.FLOAT, [1, mw])
@@ -64,7 +68,7 @@ def test_res_estimate():
     node_inp_list = ["inp", "weights", "thresh"]
 
     FCLayer_node = helper.make_node(
-        "StreamingFCLayer_Batch",
+        "MatrixVectorActivation",
         node_inp_list,
         ["outp"],
         domain="finn.custom_op.fpgadataflow",
@@ -84,7 +88,7 @@ def test_res_estimate():
         nodes=[FCLayer_node], name="fclayer_graph", inputs=[inp], outputs=[outp]
     )
 
-    model = helper.make_model(graph, producer_name="fclayer-model")
+    model = qonnx_make_model(graph, producer_name="fclayer-model")
     model = ModelWrapper(model)
 
     model.set_tensor_datatype("inp", idt)
@@ -94,7 +98,7 @@ def test_res_estimate():
     model = model.transform(GiveUniqueNodeNames())
     prod_resource_estimation = model.analysis(res_estimation)
     expect_resource_estimation = {
-        "StreamingFCLayer_Batch_0": {
+        "MatrixVectorActivation_0": {
             "BRAM_18K": 0,
             "BRAM_efficiency": 1,
             "LUT": 357,
@@ -111,7 +115,7 @@ def test_res_estimate():
 
     prod_resource_estimation = model.analysis(res_estimation_complete)
     expect_resource_estimation = {
-        "StreamingFCLayer_Batch_0": [
+        "MatrixVectorActivation_0": [
             {
                 "BRAM_18K": 0,
                 "BRAM_efficiency": 1,

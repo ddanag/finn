@@ -26,12 +26,11 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
 import numpy as np
+import os
+from qonnx.core.datatype import DataType
 
 from finn.custom_op.fpgadataflow.hlscustomop import HLSCustomOp
-from finn.core.datatype import DataType
-from onnx import TensorProto, helper
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 
 
@@ -39,16 +38,17 @@ class Pool_Batch(HLSCustomOp):
     """Class that corresponds to finn-hlslib Pool_batch function.
     Requires ConvolutionInputGenerator(depthwise == 1) to format its input
 
-    Input shape (BatchSize,OutImgDim,OutImgDim,KernelSize^2*Channels)
+    Input shape (BatchSize,OutImgDim,OutImgDim,TotalKernelSize*Channels)
     Output shape (BatchSize,OutImgDim,OutImgDim,Channels)
 
     Notes:
-    # The input shape was chosen to be compatible with im2col (only true when there
-    is not folding).
 
-    # The actual data layout produced by the hlslib kernels is different
-    for depthwise ops.
-     * depthwise SWG: (1, OFMDim, OFMDim, IFMChannels/PE, K, K, PE)
+    * The input shape was chosen to be compatible with im2col (only true when there
+      is not folding).
+    * The actual data layout produced by the hlslib kernels is different
+      for depthwise ops.
+
+        * depthwise SWG: (1, OFMDim, OFMDim, IFMChannels/PE, K, K, PE)
 
     Channels can be folded using PE (SIMD from the input perspective)
     """
@@ -57,13 +57,13 @@ class Pool_Batch(HLSCustomOp):
         my_attrs = {
             "Channels": ("i", True, 0),
             "PE": ("i", True, 1),
-            "KernelSize": ("i", True, 0),
+            "KernelSize": ("ints", True, []),
             # Function:
             #  - MaxPool
             #  - QuantAvgPool
             # TODO add support for AvgPool and AccPool
             "Function": ("s", True, "", {"MaxPool", "QuantAvgPool"}),
-            "OutImgDim": ("i", True, 0),
+            "OutImgDims": ("ints", True, []),
             # FINN DataTypes for inputs/outputs
             "InputDataType": ("s", True, ""),
             "OutputDataType": ("s", True, ""),
@@ -75,11 +75,11 @@ class Pool_Batch(HLSCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_input_datatype(self):
+    def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""
         return DataType[self.get_nodeattr("InputDataType")]
 
-    def get_output_datatype(self):
+    def get_output_datatype(self, ind=0):
         """Returns FINN DataType of output."""
         fxn = self.get_nodeattr("Function")
         odt = DataType[self.get_nodeattr("OutputDataType")]
@@ -99,15 +99,16 @@ class Pool_Batch(HLSCustomOp):
 
         return odt
 
-    def get_normal_input_shape(self):
+    def get_normal_input_shape(self, ind=0):
         ifm_ch = self.get_nodeattr("Channels")
-        odim = self.get_nodeattr("OutImgDim")
+        odims = self.get_nodeattr("OutImgDims")
         batch_size = self.get_nodeattr("BatchSize")
         k = self.get_nodeattr("KernelSize")
-        ishape = (batch_size, odim, odim, k * k * ifm_ch)
+        k_prod = int(np.prod(k))
+        ishape = (batch_size, *odims, k_prod * ifm_ch)
         return ishape
 
-    def get_folded_input_shape(self):
+    def get_folded_input_shape(self, ind=0):
         normal_ishape = list(self.get_normal_input_shape())
         ifm_ch = self.get_nodeattr("Channels")
         pe = self.get_nodeattr("PE")
@@ -116,14 +117,14 @@ class Pool_Batch(HLSCustomOp):
         folded_ishape = normal_ishape[:-1] + [fold, pe]
         return tuple(folded_ishape)
 
-    def get_normal_output_shape(self):
+    def get_normal_output_shape(self, ind=0):
         ofm_ch = self.get_nodeattr("Channels")
-        odim = self.get_nodeattr("OutImgDim")
+        odims = self.get_nodeattr("OutImgDims")
         batch_size = self.get_nodeattr("BatchSize")
-        oshape = (batch_size, odim, odim, ofm_ch)
+        oshape = (batch_size, *odims, ofm_ch)
         return oshape
 
-    def get_folded_output_shape(self):
+    def get_folded_output_shape(self, ind=0):
         normal_oshape = list(self.get_normal_output_shape())
         ifm_ch = self.get_nodeattr("Channels")
         pe = self.get_nodeattr("PE")
@@ -141,18 +142,19 @@ class Pool_Batch(HLSCustomOp):
         ifm_ch = self.get_nodeattr("Channels")
         pe = self.get_nodeattr("PE")
         k = self.get_nodeattr("KernelSize")
-        odim = self.get_nodeattr("OutImgDim")
+        k_prod = int(np.prod(k))
+        odims = self.get_nodeattr("OutImgDims")
         batch_size = self.get_nodeattr("BatchSize")
-        exp_cycles = ((ifm_ch * k * k) / pe) * odim * odim * batch_size
+        exp_cycles = ((ifm_ch * k_prod) / pe) * np.prod(odims) * batch_size
         return int(exp_cycles)
 
-    def get_instream_width(self):
+    def get_instream_width(self, ind=0):
         dt_bits = self.get_input_datatype().bitwidth()
         pe = self.get_nodeattr("PE")
         in_width = int(dt_bits * pe)
         return in_width
 
-    def get_outstream_width(self):
+    def get_outstream_width(self, ind=0):
         dt_bits = self.get_output_datatype().bitwidth()
         pe = self.get_nodeattr("PE")
         out_width = int(dt_bits * pe)
@@ -163,19 +165,7 @@ class Pool_Batch(HLSCustomOp):
         oshape = self.get_normal_output_shape()
         ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
         assert ishape == exp_ishape, "Unexpected input shape for Pool_Batch."
-        # implement tensor with correct shape
-        values = np.random.randn(*oshape).astype(np.float32)
-        return helper.make_node(
-            "Constant",
-            inputs=[],
-            outputs=[self.onnx_node.output[0]],
-            value=helper.make_tensor(
-                name="const_tensor",
-                data_type=TensorProto.FLOAT,
-                dims=values.shape,
-                vals=values.flatten().astype(float),
-            ),
-        )
+        return super().make_const_shape_op(oshape)
 
     def infer_node_datatype(self, model):
         node = self.onnx_node
@@ -211,7 +201,8 @@ class Pool_Batch(HLSCustomOp):
         return info_messages
 
     def global_includes(self):
-        self.code_gen_dict["$GLOBALS$"] = ['#include "maxpool.h"']
+        self.code_gen_dict["$GLOBALS$"] = ['#include "activations.hpp"']
+        self.code_gen_dict["$GLOBALS$"] += ['#include "maxpool.h"']
         self.code_gen_dict["$GLOBALS$"] += ['#include "pool.hpp"']
 
     def defines(self, var):
@@ -224,10 +215,12 @@ class Pool_Batch(HLSCustomOp):
         self.code_gen_dict["$DEFINES$"] += ["#define PE {}".format(pe)]
 
         k = self.get_nodeattr("KernelSize")
-        self.code_gen_dict["$DEFINES$"] += ["#define KernelSize {}".format(k)]
+        k_prod = int(np.prod(k))
+        self.code_gen_dict["$DEFINES$"] += ["#define KernelSize {}".format(k_prod)]
 
-        odim = self.get_nodeattr("OutImgDim")
-        self.code_gen_dict["$DEFINES$"] += ["#define OFMDim {}".format(odim)]
+        odims = self.get_nodeattr("OutImgDims")
+        total_odim = np.prod(odims)
+        self.code_gen_dict["$DEFINES$"] += ["#define OFMDimTotal {}".format(total_odim)]
 
         numReps = self.get_nodeattr("BatchSize")
         self.code_gen_dict["$DEFINES$"] += ["#define numReps {}".format(numReps)]
@@ -235,9 +228,9 @@ class Pool_Batch(HLSCustomOp):
     def read_npy_data(self):
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_input_datatype()
-        if dtype == DataType.BIPOLAR:
+        if dtype == DataType["BIPOLAR"]:
             # use binary for bipolar storage
-            dtype = DataType.BINARY
+            dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_instream_width()
         packed_hls_type = "ap_uint<%d>" % packed_bits
@@ -288,7 +281,7 @@ class Pool_Batch(HLSCustomOp):
 
         self.code_gen_dict["$DOCOMPUTE$"] += [
             """Pool_batch<Channels, PE, KernelSize,Slice<{} >, Slice< {} > >
-        (in0,out, pool_fxn, OFMDim*OFMDim*numReps);""".format(
+        (in0,out, pool_fxn, OFMDimTotal*numReps);""".format(
                 i_hls_dt, o_hls_dt
             )
         ]
@@ -296,9 +289,9 @@ class Pool_Batch(HLSCustomOp):
     def dataoutstrm(self):
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
-        if dtype == DataType.BIPOLAR:
+        if dtype == DataType["BIPOLAR"]:
             # use binary for bipolar storage
-            dtype = DataType.BINARY
+            dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_outstream_width()
         packed_hls_type = "ap_uint<%d>" % packed_bits
@@ -335,8 +328,12 @@ class Pool_Batch(HLSCustomOp):
         ]
 
     def pragmas(self):
-        self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0"]
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out")
+        self.code_gen_dict["$PRAGMAS$"] = [
+            "#pragma HLS INTERFACE axis port=in0 name=in0_" + self.hls_sname()
+        ]
+        self.code_gen_dict["$PRAGMAS$"].append(
+            "#pragma HLS INTERFACE axis port=out name=out_" + self.hls_sname()
+        )
         self.code_gen_dict["$PRAGMAS$"].append(
             "#pragma HLS INTERFACE ap_ctrl_none port=return"
         )
@@ -347,7 +344,6 @@ class Pool_Batch(HLSCustomOp):
         exp_ishape = self.get_normal_input_shape()
         folded_ishape = self.get_folded_input_shape()
         exp_oshape = self.get_normal_output_shape()
-        folded_oshape = self.get_folded_output_shape()
 
         # TODO ensure codegen dir exists
         if mode == "cppsim":
@@ -381,9 +377,8 @@ class Pool_Batch(HLSCustomOp):
             # load output npy file
             super().npy_to_dynamic_output(context)
             assert (
-                context[node.output[0]].shape == folded_oshape
-            ), "cppsim did not produce expected folded output shape"
-            context[node.output[0]] = context[node.output[0]].reshape(*exp_oshape)
+                context[node.output[0]].shape == exp_oshape
+            ), "cppsim did not produce expected output shape"
         elif mode == "rtlsim":
             sim = self.get_rtlsim()
             nbits = self.get_instream_width()

@@ -26,13 +26,13 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import os
-import numpy as np
 import math
+import numpy as np
+import os
 import warnings
+from qonnx.core.datatype import DataType
+
 from finn.custom_op.fpgadataflow.hlscustomop import HLSCustomOp
-from finn.core.datatype import DataType
-from onnx import TensorProto, helper
 from finn.util.data_packing import npy_to_rtlsim_input, rtlsim_output_to_npy
 
 # does not do anything at the ONNX node-by-node level, and input-output
@@ -60,40 +60,55 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
         my_attrs.update(super().get_nodeattr_types())
         return my_attrs
 
-    def get_input_datatype(self):
+    def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""
         return DataType[self.get_nodeattr("dataType")]
 
-    def get_output_datatype(self):
+    def get_output_datatype(self, ind=0):
         """Returns FINN DataType of output."""
         return DataType[self.get_nodeattr("dataType")]
 
-    def get_normal_input_shape(self):
+    def get_normal_input_shape(self, ind=0):
         ishape = self.get_nodeattr("shape")
         return ishape
 
-    def get_normal_output_shape(self):
+    def get_normal_output_shape(self, ind=0):
         oshape = self.get_nodeattr("shape")
         return oshape
 
-    def get_folded_input_shape(self):
-        # for correct functionality of the dwc node the
-        # following must apply:
-        # if inWidth > outWidth: inWidth % outWidth = 0
-        # if inWidth < outWidth: outWidth % inWidth = 0
+    def check_divisible_iowidths(self):
+        impl_style = self.get_nodeattr("impl_style")
         iwidth = self.get_nodeattr("inWidth")
         owidth = self.get_nodeattr("outWidth")
-        if iwidth > owidth:
+        if impl_style == "vivado":
+            # the AXIS IP we use in vivado mode only supports
+            # stream widths that are divisible by 8
+            iwidth_d8 = iwidth % 8 == 0
+            owidth_d8 = owidth % 8 == 0
             assert (
-                iwidth % owidth == 0
-            ), """InWidth is bigger than OutWidth and is not divisible by it.
-            Please adjust PE and SIMD values so that InWidth % OutWidth = 0"""
-        else:
-            assert (
-                owidth % iwidth == 0
-            ), """OutWidth is bigger than InWidth and is not divisible by it.
-            Please adjust PE and SIMD values so that OutWidth % InWidth = 0"""
+                iwidth_d8 and owidth_d8
+            ), """DWC impl_style=vivado requires
+            stream widths that are divisible by 8: (%d, %d)""" % (
+                iwidth,
+                owidth,
+            )
 
+    def get_iowidth_lcm(self):
+        iwidth = self.get_nodeattr("inWidth")
+        owidth = self.get_nodeattr("outWidth")
+        return int(np.lcm(iwidth, owidth))
+
+    def needs_lcm(self):
+        iwidth = self.get_nodeattr("inWidth")
+        owidth = self.get_nodeattr("outWidth")
+        maxwidth = max(iwidth, owidth)
+        minwidth = min(iwidth, owidth)
+        impl_style = self.get_nodeattr("impl_style")
+        return (impl_style == "hls") and (maxwidth % minwidth != 0)
+
+    def get_folded_input_shape(self, ind=0):
+        self.check_divisible_iowidths()
+        iwidth = self.get_nodeattr("inWidth")
         ishape = self.get_normal_input_shape()
         dummy_t = np.random.randn(*ishape)
         ibits = self.get_input_datatype().bitwidth()
@@ -111,24 +126,9 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
         dummy_t = dummy_t.reshape(new_shape)
         return dummy_t.shape
 
-    def get_folded_output_shape(self):
-        # for correct functionality of the dwc node the
-        # following must apply:
-        # if inWidth > outWidth: inWidth % outWidth = 0
-        # if inWidth < outWidth: outWidth % inWidth = 0
-        iwidth = self.get_nodeattr("inWidth")
+    def get_folded_output_shape(self, ind=0):
+        self.check_divisible_iowidths()
         owidth = self.get_nodeattr("outWidth")
-        if iwidth > owidth:
-            assert (
-                iwidth % owidth == 0
-            ), """InWidth is bigger than OutWidth and is not divisible by it.
-            Please adjust PE and SIMD values so that InWidth % OutWidth = 0"""
-        else:
-            assert (
-                owidth % iwidth == 0
-            ), """OutWidth is bigger than InWidth and is not divisible by it.
-            Please adjust PE and SIMD values so that OutWidth % InWidth = 0"""
-
         oshape = self.get_normal_output_shape()
         dummy_t = np.random.randn(*oshape)
         obits = self.get_output_datatype().bitwidth()
@@ -151,11 +151,11 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
         folded_oshape = self.get_folded_output_shape()
         return np.prod(folded_oshape[:-1])
 
-    def get_instream_width(self):
+    def get_instream_width(self, ind=0):
         in_width = self.get_nodeattr("inWidth")
         return in_width
 
-    def get_outstream_width(self):
+    def get_outstream_width(self, ind=0):
         out_width = self.get_nodeattr("outWidth")
         return out_width
 
@@ -164,19 +164,7 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
         oshape = self.get_normal_output_shape()
         ishape = tuple(model.get_tensor_shape(self.onnx_node.input[0]))
         assert ishape == tuple(exp_ishape), "Unexpect input shape for StreamingDWC."
-        # implement tensor with correct shape
-        values = np.random.randn(*oshape).astype(np.float32)
-        return helper.make_node(
-            "Constant",
-            inputs=[],
-            outputs=[self.onnx_node.output[0]],
-            value=helper.make_tensor(
-                name="const_tensor",
-                data_type=TensorProto.FLOAT,
-                dims=values.shape,
-                vals=values.flatten().astype(float),
-            ),
-        )
+        return super().make_const_shape_op(oshape)
 
     def infer_node_datatype(self, model):
         node = self.onnx_node
@@ -223,13 +211,23 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
             "#define NumInWords %d " % numInWords,
             "#define numReps %d" % numReps,
         ]
+        if self.needs_lcm():
+            lcmWidth = self.get_iowidth_lcm()
+            assert (
+                numInWords % (lcmWidth / inWidth) == 0
+            ), "Error in DWC LCM calculation"
+            numLCMToOut = numInWords // (lcmWidth / inWidth)
+            self.code_gen_dict["$DEFINES$"].append("#define LCMWidth %d" % lcmWidth)
+            self.code_gen_dict["$DEFINES$"].append(
+                "#define NumLCMToOut %d" % (numLCMToOut)
+            )
 
     def read_npy_data(self):
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_input_datatype()
-        if dtype == DataType.BIPOLAR:
+        if dtype == DataType["BIPOLAR"]:
             # use binary for bipolar storage
-            dtype = DataType.BINARY
+            dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_instream_width()
         packed_hls_type = "ap_uint<%d>" % packed_bits
@@ -247,6 +245,12 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
             'hls::stream<ap_uint<{}>> in0 ("in0");'.format(self.get_instream_width())
         )
+        if self.needs_lcm():
+            self.code_gen_dict["$STREAMDECLARATIONS$"].append(
+                'hls::stream<ap_uint<{}>> intermediate ("intermediate");'.format(
+                    self.get_iowidth_lcm()
+                )
+            )
         self.code_gen_dict["$STREAMDECLARATIONS$"].append(
             'hls::stream<ap_uint<{}>> out ("out");'.format(self.get_outstream_width())
         )
@@ -254,16 +258,26 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
     def docompute(self):
         # TODO continue with fxns below, they are copy-pasted
         op = "StreamingDataWidthConverter_Batch"
-        self.code_gen_dict["$DOCOMPUTE$"] = [
-            "%s<InWidth, OutWidth, NumInWords>(in0, out, numReps);" % (op)
-        ]
+        if self.needs_lcm():
+            self.code_gen_dict["$DOCOMPUTE$"] = [
+                'hls::stream<ap_uint<{}>> intermediate ("intermediate");'.format(
+                    self.get_iowidth_lcm()
+                ),
+                "%s<InWidth, LCMWidth, NumInWords>(in0, intermediate, numReps);" % (op),
+                "%s<LCMWidth, OutWidth, NumLCMToOut>(intermediate, out, numReps);"
+                % (op),
+            ]
+        else:
+            self.code_gen_dict["$DOCOMPUTE$"] = [
+                "%s<InWidth, OutWidth, NumInWords>(in0, out, numReps);" % (op)
+            ]
 
     def dataoutstrm(self):
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
-        if dtype == DataType.BIPOLAR:
+        if dtype == DataType["BIPOLAR"]:
             # use binary for bipolar storage
-            dtype = DataType.BINARY
+            dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_outstream_width()
         packed_hls_type = "ap_uint<%d>" % packed_bits
@@ -299,22 +313,33 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
         ]
 
     def pragmas(self):
-        self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0"]
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out")
+        self.code_gen_dict["$PRAGMAS$"] = [
+            "#pragma HLS INTERFACE axis port=in0 name=in0_" + self.hls_sname()
+        ]
+        self.code_gen_dict["$PRAGMAS$"].append(
+            "#pragma HLS INTERFACE axis port=out name=out_" + self.hls_sname()
+        )
         self.code_gen_dict["$PRAGMAS$"].append(
             "#pragma HLS INTERFACE ap_ctrl_none port=return"
         )
+        if self.needs_lcm():
+            self.code_gen_dict["$PRAGMAS$"].append(
+                "#pragma HLS DATAFLOW disable_start_propagation"
+            )
 
     def execute_node(self, context, graph):
         mode = self.get_nodeattr("exec_mode")
+        impl_style = self.get_nodeattr("impl_style")
         node = self.onnx_node
         exp_shape = self.get_normal_input_shape()
         folded_ishape = self.get_folded_input_shape()
 
         # TODO ensure codegen dir exists
         if mode == "cppsim":
+            assert impl_style == "hls", "DWC cppsim only possible when impl_style==hls"
             code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         elif mode == "rtlsim":
+            assert impl_style == "hls", "DWC rtlsim only possible when impl_style==hls"
             code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
         else:
             raise Exception(
@@ -330,10 +355,10 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
             exp_shape
         ), "Input shape does not match expected shape."
 
-        if self.get_input_datatype() == DataType.BIPOLAR:
+        if self.get_input_datatype() == DataType["BIPOLAR"]:
             # store bipolar activations as binary
             inp = (inp + 1) / 2
-            export_idt = DataType.BINARY
+            export_idt = DataType["BINARY"]
         else:
             export_idt = self.get_input_datatype()
         # reshape input into folded shape
@@ -376,7 +401,7 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
                 )
             )
         # binary -> bipolar if needed
-        if self.get_output_datatype() == DataType.BIPOLAR:
+        if self.get_output_datatype() == DataType["BIPOLAR"]:
             out = context[node.output[0]]
             out = 2 * out - 1
             context[node.output[0]] = out
@@ -480,3 +505,28 @@ class StreamingDataWidthConverter_Batch(HLSCustomOp):
             cset_luts += outw
 
         return int(cnt_luts + cset_luts)
+
+    def prepare_rtlsim(self):
+        assert self.get_nodeattr("impl_style") != "vivado", (
+            "StreamingDataWidthConverter impl_style "
+            "cannot be vivado for rtlsim. Only impl_style=rtl supported."
+        )
+        super().prepare_rtlsim()
+
+    def code_generation_ipgen(self, model, fpgapart, clk):
+        # no codegen required for impl_style=vivado since
+        # that uses premade, configurable AXIS IP
+        if self.get_nodeattr("impl_style") == "hls":
+            super().code_generation_ipgen(model, fpgapart, clk)
+
+    def ipgen_singlenode_code(self):
+        # no IP generation required for impl_style=vivado since
+        # that uses premade, configurable AXIS IP
+        if self.get_nodeattr("impl_style") == "hls":
+            super().ipgen_singlenode_code()
+        else:
+            code_gen_dir = self.get_nodeattr("code_gen_dir_ipgen")
+            # set ipgen_path and ip_path so that HLSSynthIP
+            # and CreatedStitchedIP transformations do not complain
+            self.set_nodeattr("ipgen_path", code_gen_dir)
+            self.set_nodeattr("ip_path", code_gen_dir)

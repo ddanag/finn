@@ -30,26 +30,25 @@ import pytest
 
 import numpy as np
 from onnx import TensorProto, helper
+from qonnx.core.datatype import DataType
+from qonnx.core.modelwrapper import ModelWrapper
+from qonnx.custom_op.general.multithreshold import multithreshold
+from qonnx.custom_op.registry import getCustomOp
+from qonnx.transformation.general import GiveUniqueNodeNames
+from qonnx.util.basic import gen_finn_dt_tensor, qonnx_make_model
 
 import finn.core.onnx_exec as oxe
-from finn.core.datatype import DataType
-from finn.core.modelwrapper import ModelWrapper
-from finn.util.basic import gen_finn_dt_tensor
-from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
-from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
-from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
-from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
-from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
-from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
-from finn.transformation.general import GiveUniqueNodeNames
-from finn.custom_op.general.multithreshold import multithreshold
-
-from finn.custom_op.registry import getCustomOp
 from finn.analysis.fpgadataflow.exp_cycles_per_layer import exp_cycles_per_layer
+from finn.transformation.fpgadataflow.compile_cppsim import CompileCppSim
+from finn.transformation.fpgadataflow.hlssynth_ip import HLSSynthIP
+from finn.transformation.fpgadataflow.prepare_cppsim import PrepareCppSim
+from finn.transformation.fpgadataflow.prepare_ip import PrepareIP
+from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
+from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 
 
 def _infer_sparse_weight_tensor(W_conv, k_h, k_w, channels):
-    W_sparse = np.zeros((channels, channels, k_h, k_w))
+    W_sparse = np.zeros((channels, channels, k_h, k_w), dtype=np.float32)
     for ch in range(channels):
         W_sparse[ch][ch] = W_conv[ch][0]
     W_conv = W_sparse.astype(np.float32)
@@ -63,8 +62,8 @@ def _infer_sparse_weight_tensor(W_conv, k_h, k_w, channels):
 def _calculate_dot_prod_range(dt_a, dt_b, len):
     """Returns the (min,max) values a dot product between two (un)signed vectors of
     types dt_a and dt_b of len elements can take."""
-    min_prod = 2 ** 30
-    max_prod = -(2 ** 30)
+    min_prod = 2**30
+    max_prod = -(2**30)
     for a_val in [dt_a.min(), dt_a.max()]:
         for b_val in [dt_b.min(), dt_b.max()]:
             prod = a_val * b_val * len
@@ -76,7 +75,19 @@ def _calculate_dot_prod_range(dt_a, dt_b, len):
 
 
 def _make_single_vvau_modelwrapper(
-    W, pe, k_h, k_w, channels, dim_h, dim_w, wdt, idt, odt, T=None, tdt=None
+    W,
+    pe,
+    k_h,
+    k_w,
+    channels,
+    dim_h,
+    dim_w,
+    wdt,
+    idt,
+    odt,
+    T=None,
+    tdt=None,
+    mem_mode="const",
 ):
     in_shape = [1, dim_h, dim_w, k_h * k_w * channels]  # [N, H, W, K*K*CH]
     out_shape = [
@@ -99,7 +110,7 @@ def _make_single_vvau_modelwrapper(
         actval = 0
 
     VVAU_node = helper.make_node(
-        "Vector_Vector_Activate_Batch",
+        "VectorVectorActivation",
         node_inp_list,
         ["outp"],
         domain="finn.custom_op.fpgadataflow",
@@ -114,13 +125,14 @@ def _make_single_vvau_modelwrapper(
         weightDataType=wdt.name,
         outputDataType=odt.name,
         noActivation=no_act,
+        mem_mode=mem_mode,
     )
 
     graph = helper.make_graph(
         nodes=[VVAU_node], name="vvau_graph", inputs=[inp], outputs=[outp]
     )
 
-    model = helper.make_model(graph, producer_name="vvau-model")
+    model = qonnx_make_model(graph, producer_name="vvau-model")
     model = ModelWrapper(model)
 
     model.set_tensor_datatype("inp", idt)
@@ -141,12 +153,12 @@ def prepare_inputs(input_tensor):
     return {"inp": input_tensor}
 
 
-# mem_mode: const or decoupled
-@pytest.mark.parametrize("idt", [DataType.UINT4, DataType.UINT8])
+# input datatype
+@pytest.mark.parametrize("idt", [DataType["UINT4"], DataType["UINT8"]])
 # weight datatype
-@pytest.mark.parametrize("wdt", [DataType.INT4])
+@pytest.mark.parametrize("wdt", [DataType["INT4"]])
 # activation: None or DataType
-@pytest.mark.parametrize("act", [DataType.UINT4, None])
+@pytest.mark.parametrize("act", [DataType["UINT4"], None])
 # PE
 @pytest.mark.parametrize("pe", [1, "channels"])
 # Input image shape
@@ -157,12 +169,15 @@ def prepare_inputs(input_tensor):
 @pytest.mark.parametrize("k_w", [3, 1])
 # Number of input and output channels
 @pytest.mark.parametrize("channels", [3, 4])
+# memory mode
+@pytest.mark.parametrize("mem_mode", ["const", "decoupled"])
 # execution mode
 @pytest.mark.parametrize("exec_mode", ["cppsim", "rtlsim"])
+@pytest.mark.fpgadataflow
 @pytest.mark.slow
 @pytest.mark.vivado
 def test_fpgadataflow_vvau(
-    idt, wdt, act, pe, dim_h, dim_w, k_h, k_w, channels, exec_mode
+    idt, wdt, act, pe, dim_h, dim_w, k_h, k_w, channels, mem_mode, exec_mode
 ):
     if pe == "channels":
         pe = channels
@@ -188,17 +203,17 @@ def test_fpgadataflow_vvau(
     if act is None:
         T = None
         tdt = None
-        odt = DataType.INT32
+        odt = DataType["INT32"]
     else:
         odt = act
         (min_v, max_v) = _calculate_dot_prod_range(idt, wdt, k_h * k_w * channels)
         n_steps = act.get_num_possible_values() - 1
         T = np.random.randint(min_v, max_v - 1, (channels, n_steps)).astype(np.float32)
         T = np.sort(T, axis=1)
-        tdt = DataType.INT32
+        tdt = DataType["INT32"]
 
     model = _make_single_vvau_modelwrapper(
-        W, pe, k_h, k_w, channels, dim_h, dim_w, wdt, idt, odt, T, tdt
+        W, pe, k_h, k_w, channels, dim_h, dim_w, wdt, idt, odt, T, tdt, mem_mode
     )
 
     if exec_mode == "cppsim":
@@ -233,7 +248,7 @@ def test_fpgadataflow_vvau(
     assert (y_produced == y_expected).all(), "cppsim failed"
 
     if exec_mode == "rtlsim":
-        node = model.get_nodes_by_op_type("Vector_Vector_Activate_Batch")[0]
+        node = model.get_nodes_by_op_type("VectorVectorActivation")[0]
         inst = getCustomOp(node)
         cycles_rtlsim = inst.get_nodeattr("cycles_rtlsim")
         exp_cycles_dict = model.analysis(exp_cycles_per_layer)

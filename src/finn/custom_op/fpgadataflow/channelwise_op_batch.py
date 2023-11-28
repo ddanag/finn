@@ -26,22 +26,20 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-from math import ceil
-import os
-
 import numpy as np
+import os
+import warnings
+from math import ceil
+from qonnx.core.datatype import DataType
 
-from onnx import TensorProto, helper
-from finn.core.datatype import DataType
 from finn.custom_op.fpgadataflow.hlscustomop import HLSCustomOp
 from finn.util.data_packing import (
     npy_to_rtlsim_input,
     numpy_to_hls_code,
     rtlsim_output_to_npy,
 )
-from . import templates
 
-import warnings
+from . import templates
 
 # ONNX i/o tensor shape assumptions for channelwise ops:
 # input 0 is the input tensor, shape (..., NumChannels)
@@ -53,14 +51,14 @@ import warnings
 def get_smallest_possible(vals):
     """Returns smallest (fewest bits) possible DataType that can represent
     value. Prefers unsigned integers where possible."""
-    vals = np.array(vals)
+    vals = np.array(vals, dtype=np.float64)
     for v in vals:
         assert int(v) == v, "Error float value"
 
-    for k in DataType.__members__:
+    for k in DataType.get_accumulator_dt_cands():
         dt = DataType[k]
 
-        if dt in [DataType.BIPOLAR, DataType.TERNARY, DataType.FLOAT32]:
+        if dt in [DataType["BIPOLAR"], DataType["TERNARY"], DataType["FLOAT32"]]:
             # not currently supported
             continue
 
@@ -76,9 +74,9 @@ def get_smallest_possible(vals):
     )
 
     if (0 <= vals).all():
-        return DataType.UINT64
+        return DataType["UINT64"]
     else:
-        return DataType.INT64
+        return DataType["INT64"]
 
 
 class ChannelwiseOp_Batch(HLSCustomOp):
@@ -104,9 +102,6 @@ class ChannelwiseOp_Batch(HLSCustomOp):
             "inputDataType": ("s", True, ""),
             "paramDataType": ("s", True, ""),
             "outputDataType": ("s", True, ""),
-            # input and output FIFO depths
-            "inFIFODepth": ("i", False, 0),
-            "outFIFODepth": ("i", False, 0),
             # number of input vectors, examples:
             # [1] is a single vector (like a FC layer with batch=1)
             # [4] is four vectors (like a FC layer with batch=4)
@@ -126,18 +121,7 @@ class ChannelwiseOp_Batch(HLSCustomOp):
     def make_shape_compatible_op(self, model):
         oshape = self.get_normal_output_shape()
         # implement tensor with correct shape
-        values = np.random.randn(*oshape).astype(np.float32)
-        return helper.make_node(
-            "Constant",
-            inputs=[],
-            outputs=[self.onnx_node.output[0]],
-            value=helper.make_tensor(
-                name="const_tensor",
-                data_type=TensorProto.FLOAT,
-                dims=values.shape,
-                vals=values.flatten().astype(float),
-            ),
-        )
+        return super().make_const_shape_op(oshape)
 
     def infer_node_datatype(self, model):
         node = self.onnx_node
@@ -217,7 +201,7 @@ class ChannelwiseOp_Batch(HLSCustomOp):
             return 0
 
     def lut_estimation(self):
-        """Calculates LUT cost, taking memory resource type into account """
+        """Calculates LUT cost, taking memory resource type into account"""
         # TODO add in/out FIFO contributions
         style = self.get_nodeattr("ram_style")
         P = self.get_nodeattr("PE")
@@ -234,23 +218,23 @@ class ChannelwiseOp_Batch(HLSCustomOp):
         # total cost
         return comparator_cost + lutram_cost
 
-    def get_input_datatype(self):
+    def get_input_datatype(self, ind=0):
         """Returns FINN DataType of input."""
         return DataType[self.get_nodeattr("inputDataType")]
 
-    def get_output_datatype(self):
+    def get_output_datatype(self, ind=0):
         """Returns FINN DataType of output."""
         return DataType[self.get_nodeattr("outputDataType")]
 
-    def get_instream_width(self):
+    def get_instream_width(self, ind=0):
         i_bits = self.get_input_datatype().bitwidth()
         return i_bits * self.get_nodeattr("PE")
 
-    def get_outstream_width(self):
+    def get_outstream_width(self, ind=0):
         o_bits = self.get_output_datatype().bitwidth()
         return o_bits * self.get_nodeattr("PE")
 
-    def get_folded_input_shape(self):
+    def get_folded_input_shape(self, ind=0):
         ich = self.get_nodeattr("NumChannels")
         pe = self.get_nodeattr("PE")
         fold = ich // pe
@@ -258,17 +242,17 @@ class ChannelwiseOp_Batch(HLSCustomOp):
         folded_input_shape = tuple(vecs + [fold, pe])
         return folded_input_shape
 
-    def get_folded_output_shape(self):
+    def get_folded_output_shape(self, ind=0):
         # same shape as input
         return self.get_folded_input_shape()
 
-    def get_normal_input_shape(self):
+    def get_normal_input_shape(self, ind=0):
         ich = self.get_nodeattr("NumChannels")
         vecs = list(self.get_nodeattr("numInputVectors"))
         normal_input_shape = tuple(vecs + [ich])
         return normal_input_shape
 
-    def get_normal_output_shape(self):
+    def get_normal_output_shape(self, ind=0):
         # same shape as input
         return self.get_normal_input_shape()
 
@@ -348,8 +332,8 @@ class ChannelwiseOp_Batch(HLSCustomOp):
         )
         # get input data type
         export_idt = self.get_input_datatype()
-        if self.get_input_datatype() == DataType.BIPOLAR:
-            export_idt = DataType.BINARY
+        if self.get_input_datatype() == DataType["BIPOLAR"]:
+            export_idt = DataType["BINARY"]
         idt_hls = export_idt.get_hls_datatype_str()
 
         # write parameters into params.h
@@ -357,19 +341,19 @@ class ChannelwiseOp_Batch(HLSCustomOp):
         pdt_hls = pdt.get_hls_datatype_str()
         # use binary to export bipolar activations
         export_odt = self.get_output_datatype()
-        if self.get_output_datatype() == DataType.BIPOLAR:
-            export_odt = DataType.BINARY
+        if self.get_output_datatype() == DataType["BIPOLAR"]:
+            export_odt = DataType["BINARY"]
         odt_hls = export_odt.get_hls_datatype_str()
         # get desired function
         func = self.get_nodeattr("Func")
         if func == "cmp_le":
-            func_str = "comp::less_equal"
+            func_str = "comp::less_equal<%s, %s>" % (idt_hls, pdt_hls)
         elif func == "cmp_ge":
-            func_str = "std::greater_equal"
+            func_str = "comp::greater_equal<%s, %s>" % (idt_hls, pdt_hls)
         elif func == "add":
-            func_str = "std::plus"
+            func_str = "comp::add<%s, %s, %s>" % (odt_hls, odt_hls, odt_hls)
         elif func == "mul":
-            func_str = "std::multiplies"
+            func_str = "comp::mul<%s, %s, %s>" % (odt_hls, odt_hls, odt_hls)
         else:
             raise Exception(
                 """Invalid value for attribute Func! Is currently set to: {}
@@ -386,7 +370,7 @@ class ChannelwiseOp_Batch(HLSCustomOp):
                 idt_hls,
                 pdt_hls,
                 odt_hls,
-                "%s<%s>" % (func_str, odt_hls),
+                func_str,
             )
         )
         f_params.write(parameters_hls_code)
@@ -439,16 +423,13 @@ class ChannelwiseOp_Batch(HLSCustomOp):
             # load output npy file
             super().npy_to_dynamic_output(context)
             # reinterpret binary output as bipolar where needed
-            if self.get_output_datatype() == DataType.BIPOLAR:
+            if self.get_output_datatype() == DataType["BIPOLAR"]:
                 out = context[node.output[0]]
                 out = 2 * out - 1
                 context[node.output[0]] = out
             assert (
-                context[node.output[0]].shape == self.get_folded_output_shape()
+                context[node.output[0]].shape == self.get_normal_output_shape()
             ), """Output shape is not as expected"""
-            # reshape output to have expected shape
-            oshape = self.get_normal_output_shape()
-            context[node.output[0]] = context[node.output[0]].reshape(*oshape)
         elif mode == "rtlsim":
             sim = self.get_rtlsim()
             nbits = self.get_instream_width()
@@ -490,7 +471,9 @@ class ChannelwiseOp_Batch(HLSCustomOp):
         numReps = numInputVectors[0]
         self.code_gen_dict["$DEFINES$"] = [
             """#define NumChannels1 {}\n#define PE1 {}\n#define numReps {}""".format(
-                self.get_nodeattr("NumChannels"), self.get_nodeattr("PE"), numReps,
+                self.get_nodeattr("NumChannels"),
+                self.get_nodeattr("PE"),
+                numReps,
             )
         ]
 
@@ -525,24 +508,26 @@ class ChannelwiseOp_Batch(HLSCustomOp):
         # should ImgDim be defined or just filled in here like we do now?
         ishape = self.get_folded_input_shape()
         if len(ishape) == 3:
-            imgdim = 1
+            spatial_dim = 1
         elif len(ishape) == 5:
-            imgdim = ishape[1]
+            spatial_dim = ishape[1] * ishape[2]
         else:
             raise Exception("""Unexpeted input shape""")
         self.code_gen_dict["$DOCOMPUTE$"] = [
             """Thresholding_Batch<{}, NumChannels1, PE1, {}, {}>
             (in0, out, threshs, numReps);""".format(
-                imgdim, tmpl_args["TSrcI"], tmpl_args["TDstI"],
+                spatial_dim,
+                tmpl_args["TSrcI"],
+                tmpl_args["TDstI"],
             )
         ]
 
     def dataoutstrm(self):
         code_gen_dir = self.get_nodeattr("code_gen_dir_cppsim")
         dtype = self.get_output_datatype()
-        if dtype == DataType.BIPOLAR:
+        if dtype == DataType["BIPOLAR"]:
             # use binary for bipolar storage
-            dtype = DataType.BINARY
+            dtype = DataType["BINARY"]
         elem_bits = dtype.bitwidth()
         packed_bits = self.get_outstream_width()
         packed_hls_type = "ap_uint<%d>" % packed_bits
@@ -580,8 +565,12 @@ class ChannelwiseOp_Batch(HLSCustomOp):
         ]
 
     def pragmas(self):
-        self.code_gen_dict["$PRAGMAS$"] = ["#pragma HLS INTERFACE axis port=in0"]
-        self.code_gen_dict["$PRAGMAS$"].append("#pragma HLS INTERFACE axis port=out")
+        self.code_gen_dict["$PRAGMAS$"] = [
+            "#pragma HLS INTERFACE axis port=in0 name=in0_" + self.hls_sname()
+        ]
+        self.code_gen_dict["$PRAGMAS$"].append(
+            "#pragma HLS INTERFACE axis port=out name=out_" + self.hls_sname()
+        )
         self.code_gen_dict["$PRAGMAS$"].append(
             "#pragma HLS INTERFACE ap_ctrl_none port=return"
         )
