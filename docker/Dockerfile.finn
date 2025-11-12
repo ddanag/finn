@@ -98,12 +98,10 @@ RUN pip install jupyter==1.0.0 --ignore-installed
 RUN pip install markupsafe==2.0.1
 RUN pip install matplotlib==3.7.0  --ignore-installed
 RUN pip install pytest-dependency==0.5.1
-<<<<<<< HEAD
 RUN pip install sphinx==5.0.2
 RUN pip install sphinx_rtd_theme==0.5.0
 RUN pip install pytest-xdist[setproctitle]==2.4.0
 RUN pip install pytest-parallel==0.1.0
-<<<<<<< HEAD:docker/Dockerfile.finn_dev
 RUN pip install netron
 RUN pip install pandas
 RUN pip install pytest-split-tests
@@ -140,10 +138,8 @@ RUN git clone https://github.com/maltanar/pyverilator /workspace/pyverilator
 # oh-my-xilinx
 RUN git clone https://github.com/ddanag/oh-my-xilinx.git /workspace/oh-my-xilinx
 
-=======
 RUN pip install pytest-xdist[setproctitle]==3.2.0
 RUN pip install pytest-parallel==0.1.1
->>>>>>> upstream/main
 RUN pip install "netron>=5.0.0"
 RUN pip install pandas==1.5.3
 RUN pip install scikit-learn==1.2.1
@@ -177,22 +173,5 @@ COPY docker/finn_entrypoint.sh /usr/local/bin/
 COPY docker/quicktest.sh /usr/local/bin/
 RUN chmod 755 /usr/local/bin/finn_entrypoint.sh
 RUN chmod 755 /usr/local/bin/quicktest.sh
-
-# install vitis deps if required
-ARG INSTALL_XRT_DEPS
-ARG XRT_DEB_VERSION
-
-RUN if [ "$INSTALL_XRT_DEPS" = "1" ] ; then \
-    echo "Installing XRT: $XRT_DEB_VERSION"; \
-    wget https://www.xilinx.com/bin/public/openDownload?filename=$XRT_DEB_VERSION.deb -O /tmp/$XRT_DEB_VERSION.deb; \
-    apt install -y /tmp/$XRT_DEB_VERSION.deb; \
-  else \
-    echo "Skipping installation of XRT dependencies"; \
-  fi
-
-USER $UNAME
-
-=======
->>>>>>> upstream/main:docker/Dockerfile.finn
 ENTRYPOINT ["finn_entrypoint.sh"]
 CMD ["bash"]

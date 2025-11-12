@@ -62,7 +62,7 @@ from finn.analysis.fpgadataflow.res_estimation import (
     res_estimation,
     res_estimation_complete,
 )
-from finn.analysis.fpgadataflow.res_estimation_svr import res_estimation_svr
+#from finn.analysis.fpgadataflow.res_estimation_svr import res_estimation_svr
 
 from finn.analysis.fpgadataflow.hls_synth_res_estimation import hls_synth_res_estimation
 

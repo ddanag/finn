@@ -54,35 +54,11 @@ recho () {
   echo -e "${RED}ERROR: $1${NC}"
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-# checkout the correct dependency repo commits
-# the repos themselves are cloned in the Dockerfile
-FINN_BASE_COMMIT=2c08044c5e9011c19911e731a18ac20d775bbf46
-FINN_EXP_COMMIT=e9f97dcdb4db2f889b0f36af079a6a1792b7d4de
-BREVITAS_COMMIT=14abbe1e7ef82485d79415871fcf5766b0a40a00
-CNPY_COMMIT=4e8810b1a8637695171ed346ce68f6984e585ef4
-HLSLIB_COMMIT=4d74baefa79df48b5a0348d63f39a26df075de51
-PYVERILATOR_COMMIT=e2ff74030de3992dcac54bf1b6aad2915946e8cb
-OMX_COMMIT=ace45d2adc63b1557863f7d2dc94b832a9ebd8c3
-
-gecho "Setting up known-good commit versions for FINN dependencies"
-# finn-base
-gecho "finn-base @ $FINN_BASE_COMMIT"
-git -C /workspace/finn-base pull --quiet
-git -C /workspace/finn-base checkout $FINN_BASE_COMMIT --quiet
-pip install --user -e /workspace/finn-base
-=======
-# qonnx
-pip install --user -e ${FINN_ROOT}/deps/qonnx
->>>>>>> upstream/main
-=======
 # qonnx (using workaround for https://github.com/pypa/pip/issues/7953)
 # to be fixed in future Ubuntu versions (https://bugs.launchpad.net/ubuntu/+source/setuptools/+bug/1994016)
 mv ${FINN_ROOT}/deps/qonnx/pyproject.toml ${FINN_ROOT}/deps/qonnx/pyproject.tmp
 pip install --user -e ${FINN_ROOT}/deps/qonnx
 mv ${FINN_ROOT}/deps/qonnx/pyproject.tmp ${FINN_ROOT}/deps/qonnx/pyproject.toml
->>>>>>> upstream/main
 # finn-experimental
 pip install --user -e ${FINN_ROOT}/deps/finn-experimental
 # brevitas
