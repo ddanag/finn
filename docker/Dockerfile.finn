@@ -104,46 +104,6 @@ RUN pip install jupyter==1.0.0 --ignore-installed
 RUN pip install markupsafe==2.0.1
 RUN pip install matplotlib==3.7.0  --ignore-installed
 RUN pip install pytest-dependency==0.5.1
-RUN pip install sphinx==5.0.2
-RUN pip install sphinx_rtd_theme==0.5.0
-RUN pip install pytest-xdist[setproctitle]==2.4.0
-RUN pip install pytest-parallel==0.1.0
-RUN pip install netron
-RUN pip install pandas
-RUN pip install pytest-split-tests
-RUN pip install scikit-learn==0.24.2
-RUN pip install -e git+https://github.com/fbcotter/dataset_loading.git@0.0.4#egg=dataset_loading
-#
-RUN pip install mlxtend
-
-# switch user
-RUN groupadd -g $GID $GNAME
-RUN useradd -M -u $UID $UNAME -g $GNAME
-RUN usermod -aG sudo $UNAME
-RUN echo "$UNAME:$PASSWD" | chpasswd
-RUN echo "root:$PASSWD" | chpasswd
-RUN chown -R $UNAME:$GNAME /workspace
-RUN ln -s /workspace /home/$UNAME
-USER $UNAME
-
-
-# cloning dependency repos (as user)
-# finn-base
-RUN git clone https://github.com/Xilinx/finn-base.git /workspace/finn-base
-# finn-experimental
-RUN git clone https://github.com/Xilinx/finn-experimental.git /workspace/finn-experimental
-# Brevitas
-RUN git clone https://github.com/Xilinx/brevitas.git /workspace/brevitas
-# CNPY
-RUN git clone https://github.com/rogersce/cnpy.git /workspace/cnpy
-# FINN hlslib
-#RUN git clone https://github.com/Xilinx/finn-hlslib.git /workspace/finn-hlslib
-RUN git clone https://github.com/ddanag/finn-hlslib.git	/workspace/finn-hlslib
-# PyVerilator
-RUN git clone https://github.com/maltanar/pyverilator /workspace/pyverilator
-# oh-my-xilinx
-RUN git clone https://github.com/ddanag/oh-my-xilinx.git /workspace/oh-my-xilinx
-
 RUN pip install pytest-xdist[setproctitle]==3.2.0
 RUN pip install pytest-parallel==0.1.1
 RUN pip install "netron>=5.0.0"
@@ -158,6 +118,7 @@ RUN pip install pytest-metadata==1.7.0
 RUN pip install pytest-html==3.0.0
 RUN pip install pytest-html-merger==0.0.8
 RUN pip install pytest-cov==4.1.0
+RUN pip install scikit-learn==0.24.2
 
 # extra dependencies from other FINN deps
 # installed in Docker image to make entrypoint script go faster
