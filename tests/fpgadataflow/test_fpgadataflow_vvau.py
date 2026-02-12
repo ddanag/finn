@@ -36,7 +36,6 @@ from qonnx.custom_op.general.im2col import compute_conv_output_dim
 from qonnx.custom_op.general.multithreshold import multithreshold
 from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.general import (
-    ApplyConfig,
     GiveReadableTensorNames,
     GiveUniqueNodeNames,
 )
@@ -66,7 +65,7 @@ from finn.transformation.fpgadataflow.prepare_rtlsim import PrepareRTLSim
 from finn.transformation.fpgadataflow.set_exec_mode import SetExecMode
 from finn.transformation.fpgadataflow.set_fifo_depths import InsertAndSetFIFODepths
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
-
+from finn.transformation.general import ApplyConfig
 
 def _infer_sparse_weight_tensor(W_conv, k_h, k_w, channels):
     W_sparse = np.zeros((channels, channels, k_h, k_w), dtype=np.float32)

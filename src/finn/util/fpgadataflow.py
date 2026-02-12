@@ -30,42 +30,6 @@ from qonnx.util.basic import get_by_name, is_finn_op
 
 
 def is_fpgadataflow_node(node):
-    """Returns True if given node is fpgadataflow node. Otherwise False."""
-    is_node = False
-    if node is not None:
-        if is_finn_op(node.domain):
-            n_backend = get_by_name(node.attribute, "backend")
-            if n_backend is not None:
-                backend_value = n_backend.s.decode("UTF-8")
-                if backend_value == "fpgadataflow":
-                    is_node = True
-
-    return is_node
-
-
-def is_hls_node(node):
-    """Returns True if given node is hls node. Otherwise False."""
-    is_node = False
-    if node is not None:
-        if node.domain == "finn.custom_op.fpgadataflow.hls":
-            n_backend = get_by_name(node.attribute, "backend")
-            if n_backend is not None:
-                backend_value = n_backend.s.decode("UTF-8")
-                if backend_value == "fpgadataflow":
-                    is_node = True
-
-    return is_node
-
-
-def is_rtl_node(node):
-    """Returns True if given node is rtl node. Otherwise False."""
-    is_node = False
-    if node is not None:
-        if node.domain == "finn.custom_op.fpgadataflow.rtl":
-            n_backend = get_by_name(node.attribute, "backend")
-            if n_backend is not None:
-                backend_value = n_backend.s.decode("UTF-8")
-                if backend_value == "fpgadataflow":
                     is_node = True
 
     return is_node

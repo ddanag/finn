@@ -40,7 +40,6 @@ from qonnx.custom_op.registry import getCustomOp
 from qonnx.transformation.bipolar_to_xnor import ConvertBipolarMatMulToXnorPopcount
 from qonnx.transformation.fold_constants import FoldConstants
 from qonnx.transformation.general import (
-    ApplyConfig,
     GiveReadableTensorNames,
     GiveUniqueNodeNames,
     RemoveStaticGraphInputs,
@@ -51,7 +50,6 @@ from qonnx.transformation.infer_datatypes import InferDataTypes
 from qonnx.transformation.infer_shapes import InferShapes
 from qonnx.transformation.lower_convs_to_matmul import LowerConvsToMatMul
 from qonnx.util.cleanup import cleanup_model
-from qonnx.util.config import extract_model_config_to_json
 from shutil import copy
 
 import finn.transformation.fpgadataflow.convert_to_hw_layers as to_hw
@@ -122,6 +120,7 @@ from finn.transformation.fpgadataflow.set_folding import SetFolding
 from finn.transformation.fpgadataflow.specialize_layers import SpecializeLayers
 from finn.transformation.fpgadataflow.synth_ooc import SynthOutOfContext
 from finn.transformation.fpgadataflow.vitis_build import VitisBuild
+from finn.transformation.general import ApplyConfig
 from finn.transformation.move_reshape import RemoveCNVtoFCFlatten
 from finn.transformation.qonnx.convert_qonnx_to_finn import ConvertQONNXtoFINN
 from finn.transformation.qonnx.quant_act_to_multithreshold import (
@@ -132,6 +131,10 @@ from finn.transformation.streamline.reorder import MakeMaxPoolNHWC
 from finn.util.basic import (
     get_rtlsim_trace_depth,
     pyverilate_get_liveness_threshold_cycles,
+)
+from finn.util.config import(
+    extract_model_config_consolidate_shuffles,
+    extract_model_config_to_json,
 )
 from finn.util.pyverilator import verilator_fifosim
 from finn.util.test import execute_parent
