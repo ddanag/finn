@@ -86,7 +86,7 @@ SCRIPTPATH=$(dirname "$SCRIPT")
 : ${ALVEO_BOARD="U250"}
 : ${ALVEO_TARGET_DIR="/tmp"}
 : ${PLATFORM_REPO_PATHS="/opt/xilinx/platforms"}
-: ${XRT_DEB_VERSION="xrt_202220.2.14.354_22.04-amd64-xrt"}
+: ${XRT_DEB_VERSION="xrt_202420.2.18.179_24.04-amd64-xrt"}
 : ${FINN_HOST_BUILD_DIR="/tmp/$DOCKER_INST_NAME"}
 
 : ${FINN_DOCKER_TAG="xilinx/finn:$(git describe --always --tags --dirty).$XRT_DEB_VERSION"}
